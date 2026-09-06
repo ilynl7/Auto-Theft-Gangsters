@@ -226,6 +226,9 @@ async def test_full_login_flow(server):
     servers = decode_object_list(resp.body[2])
     gs = sproto.decode_typed(servers[0], GAME_SERVER_SPEC)
     assert gs[3] == game_port
+    # serverIP must be non-empty (the client ConnectToServer()s it directly;
+    # an empty IP makes the game hop fail with "connecting to server failed")
+    assert isinstance(gs[2], str) and len(gs[2]) > 0
 
     # --- gate: create visitor account ---
     resp = await c.rpc(P.VISITOR, {})
@@ -237,6 +240,10 @@ async def test_full_login_flow(server):
     assert resp.body[0] == 0, "verfiy should succeed"
     session_id = resp.body[1]
     assert session_id > 0
+    # user_server must be a '#'-separated list of server IDS — the client
+    # int.Parse()s each part (MenuSceneController.SaveUseServer)
+    user_server = sproto.as_str(resp.body[3])
+    assert user_server == str(config.SERVER_ID)
     await c.close()
 
     # --- game server: login ---

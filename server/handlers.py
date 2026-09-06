@@ -177,7 +177,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         servers = [P.encode_game_server(
             server_id=config.SERVER_ID,
             name=config.SERVER_NAME,
-            ip=self.server.advertise_ip,
+            ip=self.server.advertise_ip or s.local_ip,
             port=config.ADVERTISE_PORT,
             state=0,
             player_state=0,
@@ -216,17 +216,19 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         servers = [P.encode_game_server(
             server_id=config.SERVER_ID,
             name=config.SERVER_NAME,
-            ip=self.server.advertise_ip,
+            ip=self.server.advertise_ip or s.local_ip,
             port=config.ADVERTISE_PORT,
         )]
         # response {state(0), session(1), game_server(2), user_server(3),
         #           facebook_bind(4), versionCode(5), dataVersionCode(6),
         #           downloadFlag(7), notice(8), notice_version(9)}
+        # user_server is a '#'-separated list of SERVER IDS the client
+        # int.Parse()s (MenuSceneController.SaveUseServer) — not a name.
         s.respond(msg, {
             0: VERIFY_OK,
             1: session_id,
             2: sproto.encode_object_array(servers),
-            3: config.SERVER_NAME,
+            3: str(config.SERVER_ID),
             4: 0,
             5: config.GAME_VERSION,
             6: config.DATA_VERSION,

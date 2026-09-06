@@ -18,6 +18,14 @@ class Session:
         self.writer = writer
         self.server = server          # GameServer (owns handlers, world, db)
         self.decoder = sproto.FrameDecoder()
+        # local address this connection arrived on — the reachable IP the
+        # client used, advertised back for the game-server hop
+        try:
+            self.local_ip = writer.get_extra_info("sockname")[0]
+        except Exception:
+            self.local_ip = ""
+        if self.local_ip in ("0.0.0.0", "::"):
+            self.local_ip = ""
         self.account_id = None
         self.verified = False
         self.logged_in = False
