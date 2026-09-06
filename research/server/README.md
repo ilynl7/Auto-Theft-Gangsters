@@ -59,6 +59,44 @@ Tags handled (see `server/protocol.py`):
   `heart_beat` (218), `leave_game` (234), plus no-op acknowledgements for
   `refresh_online_state`, `update_client_state`, `game_check` and
   `retrieve_account` (account recovery is not supported).
+- **Missions**: `accept_mission` (112) / `ret_accept_mission` (520),
+  `complete_mission` (113) / `ret_complete_mission` (521),
+  `abandon_mission` (114) / `ret_abandon_mission` (522), with state pushed
+  via `sync_mission` (519) and rewards via `show_reward_items_tips` (638).
+- **Shop**: `ask_shop_list` (143) / `ret_ask_shop_list` (554),
+  `buy_shop_item` (144) / `ret_buy_shop_item` (652).
+- **Items**: `use_item` (115) / `ret_use_item` (526), `sell_item` (129),
+  backpack sync via `sync_backpack_item` (592) and `update_item` (525).
+
+### Economy content and provisional schemas
+
+The mission/shop *tags* were recovered from the client, but the decompiled
+repo preserved no `SprotoType` classes for them, so their field layouts are
+**provisional** (documented in `server/protocol.py` `REQUEST_SPECS` /
+`RESPONSE_SPECS`):
+
+- `accept_mission.request {mission_id(0)}` → `{errno(0)}`
+  (0 ok, 1 no character, 2 unknown mission, 3 already active)
+- `complete_mission.request {mission_id(0)}` → `{errno(0)}`
+  (0 ok, 1 no character, 2 not accepted, 3 objectives not met)
+- `abandon_mission.request {mission_id(0)}` → `{errno(0)}`
+- `use_item.request {item_id(0), count(1)}` → `{errno(0)}` (2 = not owned)
+- `sell_item.request {item_id(0), count(1)}` → `{errno(0)}`
+- `ask_shop_list.request {shop_id(0)}` → `{errno(0), goods(1)}` where each
+  good is `{goods_id(0), item_id(1), count(2), currency(3), price(4)}`
+- `buy_shop_item.request {goods_id(0), count(1)}` → `{errno(0)}`
+  (3 = insufficient currency)
+- `sync_mission` push: `{missions(0)}` = array of
+  `{mission_id(0), progress(1), state(2)}` (0 active, 1 claimable)
+- `sync_backpack_item` push: `{items(0)}` = array of `{item_id(0), count(1)}`
+- `show_reward_items_tips` push: `{gold(0), diamond(1), items(2)}`
+
+Game content (shops, missions, item catalog) lives in `server/economy.py` —
+small default tables until `Bundle/Data/Data.bundle` is fully parsed; the
+handlers are fully data-driven, so new content only requires extending those
+tables. Mission types: `buy` (progresses on shop purchases of the target
+item) and `visit` (progresses on entering the target map); missions can chain
+via the `next` field and pay gold/diamond/item rewards.
 
 ## Architecture
 
@@ -66,9 +104,10 @@ Tags handled (see `server/protocol.py`):
 server/
 ├── main.py      asyncio entry point: gate + game listeners, dispatcher
 ├── session.py   per-connection state + frame pump
-├── handlers.py  protocol logic (login flow, world, chat)
+├── handlers.py  protocol logic (login flow, world, chat, missions, shop)
 ├── world.py     per-map player registry, AOI broadcast helpers
-├── db.py        SQLite accounts + characters persistence
+├── economy.py   shop catalog + mission definitions (content tables)
+├── db.py        SQLite accounts, characters, backpack, missions persistence
 ├── protocol.py  tag constants, typed request/response schemas
 ├── sproto.py    SprotoPack compression + sproto binary codec + framing
 └── config.py    environment-based configuration
@@ -87,6 +126,10 @@ python3 -m pytest tests/ -q
   client login flow: server list → visitor → verify → login → character
   create/pick → enter map → heartbeat → movement broadcast between two
   players.
+- `tests/test_economy.py` — end-to-end mission/shop flow: shop list +
+  purchase (currency debit, backpack credit), mission accept → auto-complete
+  on purchase → claim reward → chained mission → abandon, visit missions via
+  map movement, and item consumption.
 
 ## What works with a real client
 
@@ -97,10 +140,10 @@ python3 -m pytest tests/ -q
   world and other players see each other (`aoi_add`/movement/`aoi_remove`).
 - World chat and heartbeat.
 
-Character persistence (position, level, name) is stored in SQLite and
-restored on re-entry. Rides/missions/shops/PvP and the remaining ~380
-protocol tags are not yet implemented; unknown tags are logged, not
-crashed on.
+Character persistence (position, level, name), currency (gold/diamond),
+backpack and mission state are stored in SQLite and restored on re-entry.
+Rides/PvP and the remaining ~370 protocol tags are not yet implemented;
+unknown tags are logged, not crashed on.
 
 ## Wire protocol summary (recovered from Assembly-CSharp.dll)
 

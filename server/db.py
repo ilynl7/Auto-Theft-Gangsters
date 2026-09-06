@@ -1,8 +1,13 @@
-"""SQLite persistence for accounts and characters.
+"""SQLite persistence for accounts, characters, inventory, and missions.
 
 Accounts store the visitor id/key pair the client saves on first launch; the
 key acts as the account password for `verfiy`. Characters keep a JSON blob of
 the create-request fields plus live world state (position, level).
+
+Economy tables:
+  * currency columns on `characters` (gold / diamond)
+  * `items`      — backpack: one row per (character, item) stack
+  * `missions`   — one row per accepted mission per character
 """
 
 import json
@@ -25,6 +30,8 @@ CREATE TABLE IF NOT EXISTS characters (
     name        TEXT NOT NULL,
     level       INTEGER NOT NULL DEFAULT 1,
     sex         INTEGER NOT NULL DEFAULT 0,
+    gold        INTEGER NOT NULL DEFAULT 5000,
+    diamond     INTEGER NOT NULL DEFAULT 20,
     map_id      TEXT NOT NULL DEFAULT '1',
     pos_x       INTEGER NOT NULL DEFAULT 0,
     pos_y       INTEGER NOT NULL DEFAULT 0,
@@ -33,6 +40,24 @@ CREATE TABLE IF NOT EXISTS characters (
     data        TEXT NOT NULL DEFAULT '{}',
     created_at  INTEGER NOT NULL,
     UNIQUE(name)
+);
+
+CREATE TABLE IF NOT EXISTS items (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    item_id     INTEGER NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(char_id, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS missions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    mission_id  INTEGER NOT NULL,
+    progress    INTEGER NOT NULL DEFAULT 0,
+    state       INTEGER NOT NULL DEFAULT 0,   -- 0 active, 1 done (claimable), 2 finished
+    accepted_at INTEGER NOT NULL,
+    UNIQUE(char_id, mission_id)
 );
 """
 
@@ -43,6 +68,15 @@ class Database:
         self._conn = sqlite3.connect(path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        # migrate pre-economy databases: add the currency columns if missing
+        cols = {r["name"] for r in self._conn.execute(
+            "PRAGMA table_info(characters)")}
+        if "gold" not in cols:
+            self._conn.execute(
+                "ALTER TABLE characters ADD COLUMN gold INTEGER NOT NULL DEFAULT 5000")
+        if "diamond" not in cols:
+            self._conn.execute(
+                "ALTER TABLE characters ADD COLUMN diamond INTEGER NOT NULL DEFAULT 20")
         self._conn.commit()
 
     # -- accounts -----------------------------------------------------
@@ -111,6 +145,97 @@ class Database:
     def save_level(self, char_id: int, level: int) -> None:
         self._conn.execute(
             "UPDATE characters SET level = ? WHERE id = ?", (level, char_id)
+        )
+        self._conn.commit()
+
+    # -- currency -------------------------------------------------------
+    def get_currency(self, char_id: int, currency: int) -> int:
+        col = "gold" if currency == 1 else "diamond"
+        row = self._conn.execute(
+            "SELECT %s AS v FROM characters WHERE id = ?" % col, (char_id,)
+        ).fetchone()
+        return row["v"] if row else 0
+
+    def add_currency(self, char_id: int, currency: int, amount: int) -> int:
+        """Add (or spend, negative amount) currency; returns the new balance."""
+        col = "gold" if currency == 1 else "diamond"
+        bal = self.get_currency(char_id, currency)
+        new_bal = max(0, bal + amount)
+        self._conn.execute(
+            "UPDATE characters SET %s = ? WHERE id = ?" % col, (new_bal, char_id)
+        )
+        self._conn.commit()
+        return new_bal
+
+    # -- items / backpack -----------------------------------------------
+    def list_items(self, char_id: int):
+        return self._conn.execute(
+            "SELECT item_id, count FROM items WHERE char_id = ? ORDER BY item_id",
+            (char_id,),
+        ).fetchall()
+
+    def get_item_count(self, char_id: int, item_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT count FROM items WHERE char_id = ? AND item_id = ?",
+            (char_id, item_id),
+        ).fetchone()
+        return row["count"] if row else 0
+
+    def add_item(self, char_id: int, item_id: int, count: int) -> int:
+        """Add `count` of `item_id` to the backpack; returns the new count."""
+        new = max(0, self.get_item_count(char_id, item_id) + count)
+        if new == 0:
+            self._conn.execute(
+                "DELETE FROM items WHERE char_id = ? AND item_id = ?",
+                (char_id, item_id),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO items (char_id, item_id, count) VALUES (?, ?, ?)"
+                " ON CONFLICT(char_id, item_id) DO UPDATE SET count = ?",
+                (char_id, item_id, new, new),
+            )
+        self._conn.commit()
+        return new
+
+    # -- missions ---------------------------------------------------------
+    def list_missions(self, char_id: int):
+        return self._conn.execute(
+            "SELECT * FROM missions WHERE char_id = ? ORDER BY mission_id",
+            (char_id,),
+        ).fetchall()
+
+    def get_mission(self, char_id: int, mission_id: int):
+        return self._conn.execute(
+            "SELECT * FROM missions WHERE char_id = ? AND mission_id = ?",
+            (char_id, mission_id),
+        ).fetchone()
+
+    def accept_mission(self, char_id: int, mission_id: int) -> bool:
+        try:
+            self._conn.execute(
+                "INSERT INTO missions (char_id, mission_id, accepted_at)"
+                " VALUES (?, ?, ?)",
+                (char_id, mission_id, int(time.time())),
+            )
+            self._conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False  # already accepted
+
+    def set_mission_progress(self, char_id: int, mission_id: int,
+                             progress: int, state: int) -> None:
+        self._conn.execute(
+            "UPDATE missions SET progress = ?, state = ?"
+            " WHERE char_id = ? AND mission_id = ?",
+            (progress, state, char_id, mission_id),
+        )
+        self._conn.commit()
+
+    def finish_mission(self, char_id: int, mission_id: int) -> None:
+        self._conn.execute(
+            "DELETE FROM missions WHERE char_id = ? AND mission_id = ?",
+            (char_id, mission_id),
         )
         self._conn.commit()
 

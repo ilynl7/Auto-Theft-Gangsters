@@ -10,6 +10,7 @@ import logging
 import time
 
 from . import config
+from . import economy
 from . import protocol as P
 from . import sproto
 from . import world as W
@@ -45,6 +46,15 @@ class Handlers:
             P.UPDATE_CLIENT_STATE: self.h_update_client_state,
             P.GAME_CHECK: self.h_game_check,
             P.RETRIEVE_ACCOUNT: self.h_retrieve_account,
+            # missions + items
+            P.ACCEPT_MISSION: self.h_accept_mission,
+            P.COMPLETE_MISSION: self.h_complete_mission,
+            P.ABANDON_MISSION: self.h_abandon_mission,
+            P.USE_ITEM: self.h_use_item,
+            P.SELL_ITEM: self.h_sell_item,
+            # shop
+            P.ASK_SHOP_LIST: self.h_ask_shop_list,
+            P.BUY_SHOP_ITEM: self.h_buy_shop_item,
         }
 
     # ------------------------------------------------------------------
@@ -231,6 +241,25 @@ class Handlers:
             {0: W.encode_aoi_update_move(wp)},
             exclude=wp.char_id,
         )
+        self._progress_visit_missions(s, wp.char_id, wp.map_id)
+
+    def _progress_visit_missions(self, s: Session, char_id: int,
+                                 map_id: str) -> None:
+        """Advance active 'visit' missions whose target map the player entered."""
+        for row in self.server.db.list_missions(char_id):
+            if row["state"] != 0:
+                continue
+            mdef = economy.MISSIONS.get(row["mission_id"])
+            if not mdef or mdef.get("type") != "visit":
+                continue
+            if str(mdef.get("map_id")) != str(map_id):
+                continue
+            target = mdef.get("count", 1)
+            progress = min(row["progress"] + 1, target)
+            self.server.db.set_mission_progress(
+                char_id, row["mission_id"], progress,
+                1 if progress >= target else 0)
+        self._sync_missions(s, char_id)
 
     async def h_chat(self, s: Session, msg) -> None:
         wp = s.world_player
@@ -271,3 +300,221 @@ class Handlers:
     async def h_retrieve_account(self, s: Session, msg) -> None:
         # Not supported in the revival (Facebook/Google bind unavailable).
         s.respond(msg, {0: 1})
+
+    # ------------------------------------------------------------------
+    # economy helpers
+    # ------------------------------------------------------------------
+    def _require_char(self, s: Session):
+        """Return the picked character row, or None (client not ready)."""
+        row = getattr(s, "picked_character", None)
+        if row is not None:
+            return row
+        rows = self.server.db.list_characters(s.account_id or 0)
+        return rows[0] if rows else None
+
+    def _grant_mission_rewards(self, s: Session, char_id: int,
+                               reward: dict) -> None:
+        db = self.server.db
+        gold = reward.get("gold", 0)
+        diamond = reward.get("diamond", 0)
+        items = reward.get("items", {})
+        if gold:
+            db.add_currency(char_id, economy.CURRENCY_GOLD, gold)
+        if diamond:
+            db.add_currency(char_id, economy.CURRENCY_DIAMOND, diamond)
+        for item_id, count in items.items():
+            db.add_item(char_id, item_id, count)
+        stacks = [P.encode_item_stack(int(k), v)
+                  for k, v in items.items()]
+        s.push(P.SHOW_REWARD_ITEMS_TIPS, {
+            0: gold,
+            1: diamond,
+            2: sproto.encode_object_array(stacks),
+        })
+
+    def _sync_missions(self, s: Session, char_id: int) -> None:
+        rows = self.server.db.list_missions(char_id)
+        blobs = [P.encode_mission_state(r["mission_id"], r["progress"],
+                                        r["state"]) for r in rows]
+        s.push(P.SYNC_MISSION, {0: sproto.encode_object_array(blobs)})
+
+    def _sync_backpack(self, s: Session, char_id: int) -> None:
+        rows = self.server.db.list_items(char_id)
+        blobs = [P.encode_item_stack(r["item_id"], r["count"]) for r in rows]
+        s.push(P.SYNC_BACKPACK_ITEM, {0: sproto.encode_object_array(blobs)})
+
+    def _check_auto_complete(self, s: Session, char_id: int,
+                             mission_row) -> None:
+        """Flip a mission to 'complete' when its progress target is met."""
+        mdef = economy.MISSIONS.get(mission_row["mission_id"])
+        if mdef is None or mission_row["state"] != 0:
+            return
+        target = mdef.get("count", 1)
+        if mission_row["progress"] >= target:
+            self.server.db.set_mission_progress(
+                char_id, mission_row["mission_id"], mission_row["progress"], 1)
+
+    def _progress_buy_missions(self, s: Session, char_id: int,
+                               item_id: int, count: int) -> None:
+        """Advance any active 'buy' missions matching a shop purchase."""
+        for row in self.server.db.list_missions(char_id):
+            if row["state"] != 0:
+                continue
+            mdef = economy.MISSIONS.get(row["mission_id"])
+            if not mdef or mdef.get("type") != "buy" or mdef.get("item_id") != item_id:
+                continue
+            progress = min(row["progress"] + count, mdef.get("count", 1))
+            self.server.db.set_mission_progress(
+                char_id, row["mission_id"], progress,
+                1 if progress >= mdef.get("count", 1) else 0)
+        self._sync_missions(s, char_id)
+
+    # ------------------------------------------------------------------
+    # missions
+    # ------------------------------------------------------------------
+    async def h_accept_mission(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        mission_id = msg.body.get(0)
+        mdef = economy.MISSIONS.get(mission_id)
+        if mdef is None:
+            s.respond(msg, {0: 2})   # unknown mission
+            return
+        if not self.server.db.accept_mission(char_id, mission_id):
+            s.respond(msg, {0: 3})   # already active
+            return
+        s.respond(msg, {0: 0})
+        self._sync_missions(s, char_id)
+        log.info("char %d accepted mission %d", char_id, mission_id)
+
+    async def h_complete_mission(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        mission_id = msg.body.get(0)
+        mrow = self.server.db.get_mission(char_id, mission_id)
+        mdef = economy.MISSIONS.get(mission_id)
+        if mrow is None or mdef is None:
+            s.respond(msg, {0: 2})   # not accepted / unknown
+            return
+        target = mdef.get("count", 1)
+        if mrow["progress"] < target or mrow["state"] != 1:
+            s.respond(msg, {0: 3})   # objectives not met
+            return
+        s.respond(msg, {0: 0})
+        # pay out and remove the mission (rewards push after the response)
+        self.server.db.finish_mission(char_id, mission_id)
+        self._grant_mission_rewards(s, char_id, mdef.get("reward", {}))
+        self._sync_missions(s, char_id)
+        self._sync_backpack(s, char_id)
+        nxt = mdef.get("next")
+        if nxt and nxt in economy.MISSIONS:
+            self.server.db.accept_mission(char_id, nxt)
+            self._sync_missions(s, char_id)
+        log.info("char %d completed mission %d", char_id, mission_id)
+
+    async def h_abandon_mission(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        mission_id = msg.body.get(0)
+        if self.server.db.get_mission(char_id, mission_id) is None:
+            s.respond(msg, {0: 2})
+            return
+        self.server.db.finish_mission(char_id, mission_id)
+        s.respond(msg, {0: 0})
+        self._sync_missions(s, char_id)
+
+    # ------------------------------------------------------------------
+    # items
+    # ------------------------------------------------------------------
+    async def h_use_item(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        item_id = msg.body.get(0)
+        count = msg.body.get(1, 1)
+        have = self.server.db.get_item_count(char_id, item_id)
+        if have < count:
+            s.respond(msg, {0: 2})   # not enough items
+            return
+        self.server.db.add_item(char_id, item_id, -count)
+        s.respond(msg, {0: 0})
+        s.push(P.UPDATE_ITEM, {0: item_id,
+                               1: self.server.db.get_item_count(char_id, item_id),
+                               2: 0})
+        self._sync_backpack(s, char_id)
+
+    async def h_sell_item(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        item_id = msg.body.get(0)
+        count = msg.body.get(1, 1)
+        if self.server.db.get_item_count(char_id, item_id) < count:
+            s.respond(msg, {0: 2})
+            return
+        self.server.db.add_item(char_id, item_id, -count)
+        # flat 50% of a nominal 1000-gold item value — provisional economy
+        gold = 500 * count
+        new_gold = self.server.db.add_currency(char_id, economy.CURRENCY_GOLD, gold)
+        s.respond(msg, {0: 0})
+        s.push(P.UPDATE_ITEM, {0: item_id,
+                               1: self.server.db.get_item_count(char_id, item_id),
+                               2: 0})
+        self._sync_backpack(s, char_id)
+
+    # ------------------------------------------------------------------
+    # shop
+    # ------------------------------------------------------------------
+    async def h_ask_shop_list(self, s: Session, msg) -> None:
+        shop_id = msg.body.get(0, 1)
+        shop = economy.SHOPS.get(shop_id)
+        if shop is None:
+            s.respond(msg, {0: 1})   # unknown shop
+            return
+        goods = [P.encode_shop_good(g["goods_id"], g["item_id"], g["count"],
+                                    g["currency"], g["price"])
+                 for g in shop["goods"]]
+        s.respond(msg, {0: 0, 1: sproto.encode_object_array(goods)})
+
+    async def h_buy_shop_item(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        goods_id = msg.body.get(0)
+        count = msg.body.get(1, 1)
+        good = None
+        for shop in economy.SHOPS.values():
+            for g in shop["goods"]:
+                if g["goods_id"] == goods_id:
+                    good = g
+        if good is None:
+            s.respond(msg, {0: 2})   # unknown goods
+            return
+        total = good["price"] * count
+        db = self.server.db
+        if db.get_currency(char_id, good["currency"]) < total:
+            s.respond(msg, {0: 3})   # not enough currency
+            return
+        db.add_currency(char_id, good["currency"], -total)
+        new_count = db.add_item(char_id, good["item_id"], good["count"] * count)
+        s.respond(msg, {0: 0})
+        s.push(P.UPDATE_ITEM, {0: good["item_id"], 1: new_count, 2: 0})
+        self._sync_backpack(s, char_id)
+        self._progress_buy_missions(s, char_id, good["item_id"], good["count"] * count)
+        log.info("char %d bought goods %d x%d for %d", char_id, goods_id,
+                 count, total)
