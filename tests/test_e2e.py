@@ -25,6 +25,7 @@ class Client:
         self.writer = writer
         self.decoder = sproto.FrameDecoder()
         self.session_counter = 100
+        self.pending = {}   # session id -> request tag (for response decoding)
         self.pushes = []   # queue of server push frames seen while waiting
 
     def _take_push(self, want_type):
@@ -49,7 +50,7 @@ class Client:
             if not data:
                 break
             for payload in self.decoder.feed(data):
-                frame = P.parse_frame(payload, response=True)
+                frame = self._parse(payload, self.pending)
                 if frame.type is not None and frame.session is None:
                     if frame.type == want_type:
                         return frame
@@ -58,6 +59,7 @@ class Client:
 
     async def send_request(self, tag: int, body: dict = None):
         self.session_counter += 1
+        self.pending[self.session_counter] = tag
         payload = (
             sproto.encode_object({0: tag, 1: self.session_counter})
             + sproto.encode_object(body or {})
@@ -65,6 +67,16 @@ class Client:
         self.writer.write(sproto.frame_encode(payload))
         await self.writer.drain()
         return self.session_counter
+
+    @staticmethod
+    def _parse(payload, pending):
+        # server frames: responses carry session only, pushes type only
+        peek = P.parse_frame(payload, response=True)
+        if peek.type is None and peek.session is not None:
+            return P.parse_frame(
+                payload, response=True,
+                assume_type=pending.get(peek.session))
+        return peek
 
     async def recv_response(self, timeout: float = 5.0):
         """Receive the response matching our session, skipping server pushes
@@ -78,8 +90,8 @@ class Client:
             frames = self.decoder.feed(data)
             response = None
             for payload in frames:
-                frame = P.parse_frame(payload, response=True)
-                if frame.type is not None and frame.session is not None \
+                frame = self._parse(payload, self.pending)
+                if frame.session is not None and frame.type is None \
                         and frame.session == self.session_counter:
                     response = frame
                 elif frame.type is not None and frame.session is None:
@@ -171,7 +183,7 @@ async def test_update_game_server_lists_revival_server(server):
     srv, gate_port, game_port = server
     c = await _connect(gate_port)
     resp = await c.rpc(P.UPDATE_GAME_SERVER, {})
-    assert resp.type == P.UPDATE_GAME_SERVER
+    assert resp.body is not None    # response routed by session, no type
     servers = decode_object_list(resp.body[2])
     assert len(servers) == 1
     gs = sproto.decode_typed(servers[0], GAME_SERVER_SPEC)
@@ -185,7 +197,7 @@ async def test_visitor_creates_account(server):
     srv, gate_port, _ = server
     c = await _connect(gate_port)
     resp = await c.rpc(P.VISITOR, {})
-    assert resp.type == P.VISITOR
+    assert resp.body is not None
     account_id = sproto.as_str(resp.body[0])
     key = sproto.as_str(resp.body[1])
     assert account_id.isdigit()
@@ -233,12 +245,12 @@ async def test_full_login_flow(server):
         0: session_id, 1: account_id, 2: 0,
         3: "1.012.017", 4: "Unity4.7", 5: 1, 6: 12345,
     })
-    assert resp.type == P.LOGIN
+    assert resp.body is not None
     assert resp.body[0] == P.LOGIN
 
     # --- game server: character list (empty) ---
     resp = await g.rpc(P.CHARACTER_LIST, {})
-    assert resp.type == P.CHARACTER_LIST
+    assert resp.body is not None
 
     # --- create a character ---
     general = sproto.encode_object({0: "TestGangster", 2: 0})
@@ -291,3 +303,45 @@ async def test_full_login_flow(server):
 
     await g.close()
     await g2.close()
+
+
+@pytest.mark.asyncio
+async def test_real_client_dispatch_session_only_responses(server):
+    """Regression: the real client's NetLogic.ProcessPack routes frames by
+    Package header — HasType -> push, HasSession -> RPC response. Responses
+    must therefore carry ONLY a session (no type field). A response frame
+    with a type field would be treated as a push and silently dropped,
+    hanging the client on the loading widget (visitor -> verfiy -> login
+    never completing)."""
+    srv, gate_port, game_port = server
+    c = await _connect(gate_port)
+
+    # raw frame inspection: response Package must have session, no type
+    async def raw_roundtrip(tag, body=None):
+        sess = await c.send_request(tag, body)
+        import time
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            data = await asyncio.wait_for(c.reader.read(8192), 5)
+            for payload in c.decoder.feed(data):
+                frame = P.parse_frame(payload, response=True)
+                if frame.session == sess and frame.type is None:
+                    return frame
+        raise AssertionError("no session-only response for tag %d" % tag)
+
+    resp = await raw_roundtrip(P.VISITOR, {})
+    assert resp.type is None and resp.session is not None
+    assert sproto.as_str(resp.body[0]).isdigit()
+
+    account_id = sproto.as_str(resp.body[0])
+    key = sproto.as_str(resp.body[1])
+    resp = await raw_roundtrip(P.VERFIY, {0: account_id, 1: key, 2: "14119"})
+    assert resp.type is None
+    assert resp.body[0] == 0
+    session_id = resp.body[1]
+
+    # verify the full dispatch contract: no frame may ever carry both a
+    # type and a session (that is what froze the real client)
+    resp = await raw_roundtrip(P.LOGIN, {0: session_id, 1: account_id})
+    assert resp.type is None and resp.body[0] == P.LOGIN
+    await c.close()

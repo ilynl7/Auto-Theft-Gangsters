@@ -499,11 +499,19 @@ def encode_frame(tag: int, session: int, body: dict) -> bytes:
     """Build a full wire frame for a server->client message.
 
     Payload layout (matching the client's ProcessPack reader):
-        sproto(Package{type=tag, session=session?}) || sproto(body)
+        sproto(Package{...}) || sproto(body)
+
+    The client dispatches on the Package header:
+      * HasType   -> server push, routed through NetReceiver by tag
+      * HasSession-> RPC response, routed through NetSender by session id
+    So responses carry ONLY the session (no type) and pushes carry ONLY
+    the type (no session) — sending both makes the real client treat a
+    response as a push and drop it, hanging the login flow.
     """
-    pkg = {0: tag}
     if session is not None:
-        pkg[1] = session
+        pkg = {1: session}                # RPC response
+    else:
+        pkg = {0: tag}                    # server push
     payload = _enc.encode_object(pkg) + _enc.encode_object(body or {})
     return _enc.frame_encode(payload)
 
@@ -527,11 +535,14 @@ class IncomingMessage:
         )
 
 
-def parse_frame(payload: bytes, response: bool = False) -> "IncomingMessage":
+def parse_frame(payload: bytes, response: bool = False,
+                assume_type: int = None) -> "IncomingMessage":
     """Split an unpacked frame payload into the Package header and body.
 
     `response=True` decodes the body with server->client field types
     (used when parsing frames received *from* the server, e.g. in tests).
+    Response frames carry no type in the Package header, so callers that
+    know which request a session belongs to pass `assume_type`.
     """
     dec = _enc.Decoder(payload)
     ptype = None
@@ -546,10 +557,11 @@ def parse_frame(payload: bytes, response: bool = False) -> "IncomingMessage":
     consumed = dec.pos
     body = {}
     if consumed < len(payload):
+        msg_type = ptype if ptype is not None else assume_type
         if response:
-            body = decode_response(ptype, payload[consumed:])
+            body = decode_response(msg_type, payload[consumed:])
         else:
-            body = decode_request(ptype, payload[consumed:])
+            body = decode_request(msg_type, payload[consumed:])
     return IncomingMessage(ptype, session, body)
 
 

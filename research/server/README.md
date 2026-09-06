@@ -293,6 +293,12 @@ logged, not crashed on.
 - Transport: raw TCP.
 - Frame: `[u16be len][sproto-pack(payload)]`.
 - payload = `sproto(Package{type?,session?})` + `sproto(body)`.
+- **Dispatch rule (NetLogic.ProcessPack, recovered from the DLL):** a frame
+  whose Package has `type` is a server push (routed via NetReceiver by tag);
+  a frame whose Package has `session` is an RPC response (routed via
+  NetSender by session id). Server responses therefore carry ONLY the
+  session — no type field. Sending a type on responses makes the real
+  client drop them and hang on the loading widget.
 - Sproto is the standard compact binary serialization (Skynet-style).
 
 Full tag table: `research/notes/protocol_tags.json` (409 entries).
