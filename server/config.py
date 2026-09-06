@@ -36,4 +36,4 @@ SERVER_NAME = os.environ.get("ATG_SERVER_NAME", "Revival-1")
 # IP advertised to clients for the game-server hop. The client uses whatever
 # IP/hostname the APK points at for login by default; override for hosting
 # behind a different public address.
-ADVERTISE_IP = os.environ.get("ATG_ADVERTISE_IP", "")
+ADVERTISE_IP = os.environ.get("ATG_ADVERTISE_IP", "78.154.103.21")
