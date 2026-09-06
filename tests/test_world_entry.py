@@ -96,6 +96,36 @@ def test_character_blob_movement_at_wire_tag_7():
     assert pos in blob  # sanity: position bytes present
 
 
+def test_batfighter_visual_remapped_to_existing_model_bundle():
+    """Profession 0 (Batfighter) must render with a model the APK ships.
+
+    The circulating v1.19 repack has no Bundle/Model/XD_A* bundles (they were
+    hot-downloaded from the dead CDN), so a character whose visual.ModeId
+    resolves to XD_A stalls the client's async bundle load forever: loading
+    window freezes at 90% with no crash. The server remaps Batfighter visuals
+    to QJ_A (Boxer) assets — cosmetic only.
+    """
+    movement = P.encode_movement({"x": 1, "y": 0, "z": 2, "o": 0})
+    blob = encode_character_blob(9, "BatRemap", 1, movement, profession=0)
+    d = sproto.decode_typed(blob, CHARACTER_SPEC)
+    vis = sproto.decode_typed(sproto.as_bytes(d[6]), VISUAL_SPEC)
+    assert vis[1] == "104"               # QJ_A, not the missing XD_A "100"
+    # aoi blobs and overviews go through the same remap
+    aoi = encode_character_aoi_blob(9, "BatRemap", 1, movement, profession=0)
+    d2 = sproto.decode_typed(aoi, CHARACTER_AOI_SPEC)
+    vis2 = sproto.decode_typed(sproto.as_bytes(d2[1]), VISUAL_SPEC)
+    assert vis2[1] == "104"
+    ov = encode_character_overview(
+        {"id": 9, "name": "BatRemap", "level": 1, "sex": 0,
+         "profession": 0, "created_at": 0})
+    d3 = sproto.decode_typed(ov, OVERVIEW_SPEC)
+    vis3 = sproto.decode_typed(sproto.as_bytes(d3[3]), VISUAL_SPEC)
+    assert vis3[1] == "104"
+    # profession itself is untouched (general.profession stays 0)
+    gen = sproto.decode_typed(sproto.as_bytes(d[1]), GENERAL_SPEC)
+    assert gen[1] == 0
+
+
 def test_character_aoi_blob_uses_aoi_tags():
     """aoi_add carries character_aoi (movement=5, visual=1), NOT character."""
     movement = P.encode_movement({"x": 1, "y": 0, "z": 2, "o": 0})
