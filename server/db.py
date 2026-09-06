@@ -30,7 +30,12 @@ CREATE TABLE IF NOT EXISTS characters (
     name        TEXT NOT NULL,
     level       INTEGER NOT NULL DEFAULT 1,
     sex         INTEGER NOT NULL DEFAULT 0,
+    exp         INTEGER NOT NULL DEFAULT 0,
+    hp          INTEGER NOT NULL DEFAULT 100,
+    max_hp      INTEGER NOT NULL DEFAULT 100,
     gold        INTEGER NOT NULL DEFAULT 5000,
+    car_id      INTEGER,
+    using_car   INTEGER NOT NULL DEFAULT 0,
     diamond     INTEGER NOT NULL DEFAULT 20,
     map_id      TEXT NOT NULL DEFAULT '1',
     pos_x       INTEGER NOT NULL DEFAULT 0,
@@ -58,6 +63,87 @@ CREATE TABLE IF NOT EXISTS missions (
     state       INTEGER NOT NULL DEFAULT 0,   -- 0 active, 1 done (claimable), 2 finished
     accepted_at INTEGER NOT NULL,
     UNIQUE(char_id, mission_id)
+);
+
+CREATE TABLE IF NOT EXISTS equip_slots (
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    slot        INTEGER NOT NULL,             -- 0 weapon, 1 armor, 2 badge, 3 fashion
+    item_id     INTEGER NOT NULL,
+    UNIQUE(char_id, slot)
+);
+
+CREATE TABLE IF NOT EXISTS storagepack (
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    item_id     INTEGER NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(char_id, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS guilds (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    leader      TEXT NOT NULL,
+    notice      TEXT NOT NULL DEFAULT '',
+    gold        INTEGER NOT NULL DEFAULT 0,
+    level       INTEGER NOT NULL DEFAULT 1,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS guild_members (
+    guild_id    INTEGER NOT NULL REFERENCES guilds(id),
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    name        TEXT NOT NULL,
+    job         INTEGER NOT NULL DEFAULT 2,   -- 0 leader, 1 officer, 2 member
+    joined_at   INTEGER NOT NULL,
+    UNIQUE(guild_id, char_id)
+);
+
+CREATE TABLE IF NOT EXISTS guild_requests (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id    INTEGER NOT NULL REFERENCES guilds(id),
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    name        TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    UNIQUE(guild_id, char_id)
+);
+
+CREATE TABLE IF NOT EXISTS guild_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id    INTEGER NOT NULL REFERENCES guilds(id),
+    entry       TEXT NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS friends (
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    friend_id   INTEGER NOT NULL REFERENCES characters(id),
+    UNIQUE(char_id, friend_id)
+);
+
+CREATE TABLE IF NOT EXISTS mails (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    sender      TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL DEFAULT '',
+    gold        INTEGER NOT NULL DEFAULT 0,
+    diamond     INTEGER NOT NULL DEFAULT 0,
+    collected   INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS progress (
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    key         TEXT NOT NULL,
+    value       INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(char_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS skills (
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    skill_id    INTEGER NOT NULL,
+    level       INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(char_id, skill_id)
 );
 """
 
@@ -237,6 +323,341 @@ class Database:
             "DELETE FROM missions WHERE char_id = ? AND mission_id = ?",
             (char_id, mission_id),
         )
+        self._conn.commit()
+
+    # -- exp / hp --------------------------------------------------------
+    def add_exp(self, char_id: int, amount: int) -> int:
+        """Add exp and level up (1000 exp per level); returns (level, exp)."""
+        self._conn.execute(
+            "UPDATE characters SET exp = exp + ? WHERE id = ?",
+            (amount, char_id),
+        )
+        row = self._conn.execute(
+            "SELECT level, exp FROM characters WHERE id = ?", (char_id,)
+        ).fetchone()
+        level, exp = row["level"], row["exp"]
+        while exp >= 1000 * level:
+            exp -= 1000 * level
+            level += 1
+            self._conn.execute(
+                "UPDATE characters SET max_hp = max_hp + 10, hp = max_hp + 10"
+                " WHERE id = ?", (char_id,))
+        self._conn.execute(
+            "UPDATE characters SET level = ?, exp = ? WHERE id = ?",
+            (level, exp, char_id),
+        )
+        self._conn.commit()
+        return level, exp
+
+    def get_hp(self, char_id: int):
+        row = self._conn.execute(
+            "SELECT hp, max_hp FROM characters WHERE id = ?", (char_id,)
+        ).fetchone()
+        return (row["hp"], row["max_hp"]) if row else (0, 0)
+
+    def set_hp(self, char_id: int, hp: int) -> int:
+        row = self._conn.execute(
+            "SELECT max_hp FROM characters WHERE id = ?", (char_id,)
+        ).fetchone()
+        max_hp = row["max_hp"] if row else 100
+        hp = max(0, min(hp, max_hp))
+        self._conn.execute(
+            "UPDATE characters SET hp = ? WHERE id = ?", (hp, char_id))
+        self._conn.commit()
+        return hp
+
+    # -- equipment / storage ---------------------------------------------
+    def get_equipped(self, char_id: int, slot: int):
+        row = self._conn.execute(
+            "SELECT item_id FROM equip_slots WHERE char_id = ? AND slot = ?",
+            (char_id, slot),
+        ).fetchone()
+        return row["item_id"] if row else None
+
+    def set_equipped(self, char_id: int, slot: int, item_id) -> None:
+        self._conn.execute(
+            "DELETE FROM equip_slots WHERE char_id = ? AND slot = ?",
+            (char_id, slot),
+        )
+        if item_id is not None:
+            self._conn.execute(
+                "INSERT INTO equip_slots (char_id, slot, item_id) VALUES (?, ?, ?)",
+                (char_id, slot, item_id),
+            )
+        self._conn.commit()
+
+    def list_equipped(self, char_id: int):
+        return self._conn.execute(
+            "SELECT slot, item_id FROM equip_slots WHERE char_id = ?", (char_id,)
+        ).fetchall()
+
+    def list_storage(self, char_id: int):
+        return self._conn.execute(
+            "SELECT item_id, count FROM storagepack WHERE char_id = ?"
+            " ORDER BY item_id", (char_id,),
+        ).fetchall()
+
+    def get_storage_count(self, char_id: int, item_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT count FROM storagepack WHERE char_id = ? AND item_id = ?",
+            (char_id, item_id),
+        ).fetchone()
+        return row["count"] if row else 0
+
+    def add_storage(self, char_id: int, item_id: int, count: int) -> int:
+        new = max(0, self.get_storage_count(char_id, item_id) + count)
+        if new == 0:
+            self._conn.execute(
+                "DELETE FROM storagepack WHERE char_id = ? AND item_id = ?",
+                (char_id, item_id),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO storagepack (char_id, item_id, count) VALUES (?, ?, ?)"
+                " ON CONFLICT(char_id, item_id) DO UPDATE SET count = ?",
+                (char_id, item_id, new, new),
+            )
+        self._conn.commit()
+        return new
+
+    # -- guilds ------------------------------------------------------------
+    def create_guild(self, name: str, leader_name: str):
+        try:
+            cur = self._conn.execute(
+                "INSERT INTO guilds (name, leader, created_at) VALUES (?, ?, ?)",
+                (name, leader_name, int(time.time())),
+            )
+            self._conn.commit()
+        except sqlite3.IntegrityError:
+            return None
+        return self.get_guild(cur.lastrowid)
+
+    def get_guild(self, guild_id: int):
+        return self._conn.execute(
+            "SELECT * FROM guilds WHERE id = ?", (guild_id,)
+        ).fetchone()
+
+    def get_guild_by_member(self, char_id: int):
+        row = self._conn.execute(
+            "SELECT g.* FROM guilds g JOIN guild_members m ON m.guild_id = g.id"
+            " WHERE m.char_id = ?", (char_id,),
+        ).fetchone()
+        return row
+
+    def list_guilds(self):
+        return self._conn.execute(
+            "SELECT * FROM guilds ORDER BY id").fetchall()
+
+    def search_guilds(self, pattern: str):
+        return self._conn.execute(
+            "SELECT * FROM guilds WHERE name LIKE ? ORDER BY id",
+            ("%" + pattern + "%",),
+        ).fetchall()
+
+    def guild_member_count(self, guild_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS c FROM guild_members WHERE guild_id = ?",
+            (guild_id,),
+        ).fetchone()
+        return row["c"] if row else 0
+
+    def list_guild_members(self, guild_id: int):
+        return self._conn.execute(
+            "SELECT * FROM guild_members WHERE guild_id = ? ORDER BY job, name",
+            (guild_id,),
+        ).fetchall()
+
+    def get_guild_member(self, guild_id: int, char_id: int):
+        return self._conn.execute(
+            "SELECT * FROM guild_members WHERE guild_id = ? AND char_id = ?",
+            (guild_id, char_id),
+        ).fetchone()
+
+    def add_guild_member(self, guild_id: int, char_id: int, name: str,
+                         job: int = 2) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO guild_members (guild_id, char_id, name, job,"
+            " joined_at) VALUES (?, ?, ?, ?, ?)",
+            (guild_id, char_id, name, job, int(time.time())),
+        )
+        self._conn.commit()
+
+    def remove_guild_member(self, guild_id: int, char_id: int) -> None:
+        self._conn.execute(
+            "DELETE FROM guild_members WHERE guild_id = ? AND char_id = ?",
+            (guild_id, char_id),
+        )
+        self._conn.commit()
+
+    def set_guild_job(self, guild_id: int, char_id: int, job: int) -> None:
+        self._conn.execute(
+            "UPDATE guild_members SET job = ? WHERE guild_id = ? AND char_id = ?",
+            (job, guild_id, char_id),
+        )
+        self._conn.commit()
+
+    def add_guild_gold(self, guild_id: int, amount: int) -> int:
+        row = self._conn.execute(
+            "SELECT gold FROM guilds WHERE id = ?", (guild_id,)
+        ).fetchone()
+        gold = max(0, (row["gold"] if row else 0) + amount)
+        self._conn.execute(
+            "UPDATE guilds SET gold = ? WHERE id = ?", (gold, guild_id))
+        self._conn.commit()
+        return gold
+
+    def set_guild_notice(self, guild_id: int, notice: str) -> None:
+        self._conn.execute(
+            "UPDATE guilds SET notice = ? WHERE id = ?", (notice, guild_id))
+        self._conn.commit()
+
+    def add_guild_log(self, guild_id: int, entry: str) -> None:
+        self._conn.execute(
+            "INSERT INTO guild_log (guild_id, entry, created_at) VALUES (?, ?, ?)",
+            (guild_id, entry, int(time.time())),
+        )
+        self._conn.commit()
+
+    def list_guild_log(self, guild_id: int, limit: int = 20):
+        return self._conn.execute(
+            "SELECT entry, created_at FROM guild_log WHERE guild_id = ?"
+            " ORDER BY id DESC LIMIT ?", (guild_id, limit),
+        ).fetchall()
+
+    def add_guild_request(self, guild_id: int, char_id: int, name: str) -> bool:
+        try:
+            self._conn.execute(
+                "INSERT INTO guild_requests (guild_id, char_id, name, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                (guild_id, char_id, name, int(time.time())),
+            )
+            self._conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def list_guild_requests(self, guild_id: int):
+        return self._conn.execute(
+            "SELECT * FROM guild_requests WHERE guild_id = ? ORDER BY id",
+            (guild_id,),
+        ).fetchall()
+
+    def remove_guild_request(self, guild_id: int, char_id: int) -> None:
+        self._conn.execute(
+            "DELETE FROM guild_requests WHERE guild_id = ? AND char_id = ?",
+            (guild_id, char_id),
+        )
+        self._conn.commit()
+
+    # -- friends ------------------------------------------------------------
+    def list_friends(self, char_id: int):
+        return self._conn.execute(
+            "SELECT friend_id FROM friends WHERE char_id = ? ORDER BY friend_id",
+            (char_id,),
+        ).fetchall()
+
+    def add_friend(self, char_id: int, friend_id: int) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO friends (char_id, friend_id) VALUES (?, ?)",
+            (char_id, friend_id),
+        )
+        self._conn.commit()
+
+    def remove_friend(self, char_id: int, friend_id: int) -> None:
+        self._conn.execute(
+            "DELETE FROM friends WHERE char_id = ? AND friend_id = ?",
+            (char_id, friend_id),
+        )
+        self._conn.commit()
+
+    # -- mail ---------------------------------------------------------------
+    def list_mails(self, char_id: int):
+        return self._conn.execute(
+            "SELECT * FROM mails WHERE char_id = ? ORDER BY id DESC", (char_id,)
+        ).fetchall()
+
+    def get_mail(self, char_id: int, mail_id: int):
+        return self._conn.execute(
+            "SELECT * FROM mails WHERE char_id = ? AND id = ?",
+            (char_id, mail_id),
+        ).fetchone()
+
+    def send_mail(self, char_id: int, sender: str, title: str, body: str,
+                  gold: int = 0, diamond: int = 0) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO mails (char_id, sender, title, body, gold, diamond,"
+            " created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (char_id, sender, title, body, gold, diamond, int(time.time())),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def set_mail_collected(self, mail_id: int) -> None:
+        self._conn.execute(
+            "UPDATE mails SET collected = 1 WHERE id = ?", (mail_id,))
+        self._conn.commit()
+
+    def delete_mail(self, char_id: int, mail_id: int) -> None:
+        self._conn.execute(
+            "DELETE FROM mails WHERE char_id = ? AND id = ?", (char_id, mail_id))
+        self._conn.commit()
+
+    # -- generic progress key/values (sign-in, daily, skills…) --------------
+    def get_progress(self, char_id: int, key: str) -> int:
+        row = self._conn.execute(
+            "SELECT value FROM progress WHERE char_id = ? AND key = ?",
+            (char_id, key),
+        ).fetchone()
+        return row["value"] if row else 0
+
+    def set_progress(self, char_id: int, key: str, value: int) -> None:
+        self._conn.execute(
+            "INSERT INTO progress (char_id, key, value) VALUES (?, ?, ?)"
+            " ON CONFLICT(char_id, key) DO UPDATE SET value = ?",
+            (char_id, key, value, value),
+        )
+        self._conn.commit()
+
+    # -- skills ---------------------------------------------------------------
+    def list_skills(self, char_id: int):
+        return self._conn.execute(
+            "SELECT skill_id, level FROM skills WHERE char_id = ?"
+            " ORDER BY skill_id", (char_id,),
+        ).fetchall()
+
+    def get_skill(self, char_id: int, skill_id: int):
+        return self._conn.execute(
+            "SELECT level FROM skills WHERE char_id = ? AND skill_id = ?",
+            (char_id, skill_id),
+        ).fetchone()
+
+    def learn_skill(self, char_id: int, skill_id: int) -> int:
+        row = self.get_skill(char_id, skill_id)
+        level = (row["level"] if row else 0) + 1
+        self._conn.execute(
+            "INSERT INTO skills (char_id, skill_id, level) VALUES (?, ?, ?)"
+            " ON CONFLICT(char_id, skill_id) DO UPDATE SET level = ?",
+            (char_id, skill_id, level, level),
+        )
+        self._conn.commit()
+        return level
+
+    # -- cars / mounts ----------------------------------------------------------
+    def list_cars(self, char_id: int):
+        row = self._conn.execute(
+            "SELECT car_id, using_car FROM characters WHERE id = ?", (char_id,)
+        ).fetchone()
+        return [row] if row and row["car_id"] is not None else []
+
+    def buy_car(self, char_id: int, car_id: int) -> None:
+        self._conn.execute(
+            "UPDATE characters SET car_id = ? WHERE id = ?", (car_id, char_id))
+        self._conn.commit()
+
+    def set_using_car(self, char_id: int, car_id) -> None:
+        self._conn.execute(
+            "UPDATE characters SET car_id = ?, using_car = ? WHERE id = ?",
+            (car_id, 1 if car_id is not None else 0, char_id))
         self._conn.commit()
 
     def close(self) -> None:

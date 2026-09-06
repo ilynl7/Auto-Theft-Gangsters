@@ -55,6 +55,61 @@ class Handlers:
             # shop
             P.ASK_SHOP_LIST: self.h_ask_shop_list,
             P.BUY_SHOP_ITEM: self.h_buy_shop_item,
+            # inventory / equipment
+            P.EQUIP_ITEM: self.h_equip_item,
+            P.UNEQUIP_ITEM: self.h_unequip_item,
+            P.EQUIP_BADGE: self.h_equip_badge,
+            P.UNEQUIP_BADGE: self.h_unequip_badge,
+            P.EQUIP_FASHION_ITEM: self.h_equip_fashion,
+            P.UNEQUIP_FASHION_ITEM: self.h_unequip_fashion,
+            P.OPEN_ITEM_PACKAGE: self.h_open_item_package,
+            P.REQUEST_UPDATE_STORAGEPACK: self.h_request_update_storagepack,
+            P.PUT_ITEM_STORAGEPACK: self.h_put_item_storagepack,
+            P.TAKE_ITEM_STORAGEPACK: self.h_take_item_storagepack,
+            P.REQUEST_RANDOM_NAME: self.h_request_random_name,
+            P.CHANGE_ITEM_STATE: self.h_change_item_state,
+            # combat / npcs
+            P.SKILL_USE: self.h_skill_use,
+            P.ATTACK_LOCAL_NPC: self.h_attack_local_npc,
+            P.LOCAL_NPC_DIE: self.h_local_npc_die,
+            P.ACCEPT_DAMGE: self.h_accept_damage,
+            P.RELIFE_PLAYER: self.h_relife_player,
+            P.SKILL_LEVEL_UP: self.h_skill_level_up,
+            # guilds
+            P.GUILD_CREATE: self.h_guild_create,
+            P.GUILD_JOIN: self.h_guild_join,
+            P.GUILD_LEAVE: self.h_guild_leave,
+            P.GUILD_KICK: self.h_guild_kick,
+            P.GUILD_JOB_CHANGE: self.h_guild_job_change,
+            P.GUILD_REQ_LIST: self.h_guild_req_list,
+            P.GUILD_REQ_INFO: self.h_guild_req_info,
+            P.GUILD_APPROVE_RESVERVE: self.h_guild_approve,
+            P.REQ_GUILD_NOTICE: self.h_req_guild_notice,
+            P.REQ_OPEN_GUILD_SHOP: self.h_req_open_guild_shop,
+            P.REQ_BUY_GUILD_GOODS: self.h_req_buy_guild_goods,
+            P.GUILD_LOG: self.h_guild_log,
+            P.GUILD_DONATE: self.h_guild_donate,
+            P.SEARCH_GUILD: self.h_search_guild,
+            # friends
+            P.ADD_FRIEND: self.h_add_friend,
+            P.DEL_FRIEND: self.h_del_friend,
+            P.ASK_CHARACTER_INFO: self.h_ask_character_info,
+            P.SYN_FRIEND_INFO: self.h_sync_friend_info,
+            # mail
+            P.SEND_MAIL: self.h_send_mail,
+            P.MAIL_OPERATION: self.h_mail_operation,
+            P.SEND_MAIL_BOX: self.h_send_mail_box,
+            # daily / sign-in
+            P.REQUEST_DAILY_MISSION: self.h_request_daily_mission,
+            P.SIGN_WEEK: self.h_sign_week,
+            P.SIGN_30_DAY: self.h_sign_30_day,
+            # mounts / cars
+            P.REQUEST_MOUNT_INFO: self.h_request_mount_info,
+            P.MOUNT_EQUIP: self.h_mount_equip,
+            P.MOUNT_UNEQUIP: self.h_mount_unequip,
+            P.USE_MOUNT: self.h_use_mount,
+            P.UNUSE_MOUNT: self.h_unuse_mount,
+            P.BUY_CAR_SHOP: self.h_buy_car_shop,
         }
 
     # ------------------------------------------------------------------
@@ -186,6 +241,14 @@ class Handlers:
             return
         s.picked_character = row
         s.respond(msg, {0: 0})  # errno 0 = ok
+        # baseline syncs right after pick: skills + friends + storage
+        self._sync_skills(s, row["id"])
+        await self._push_friend_info(s)
+        rows_storage = self.server.db.list_storage(row["id"])
+        s.push(P.RET_REQUEST_UPDATE_STORAGEPACK,
+               {0: sproto.encode_object_array(
+                   [P.encode_item_stack(r["item_id"], r["count"])
+                    for r in rows_storage])})
 
     async def h_map_ready(self, s: Session, msg) -> None:
         # Client finished loading; nothing to do server-side.
@@ -211,18 +274,22 @@ class Handlers:
         }
         s.world_player = wp
 
-        # tell the entering player about everyone already here
+        # confirm entry with the player's own spawn data FIRST (the client
+        # dispatches responses by session id, pushes by type)
+        s.respond(msg, {0: W.encode_main_player_create(wp)})
+
+        # then tell the entering player about everyone already here
         for other in self.server.world.others(map_id, row["id"]):
             s.push(P.AOI_ADD, {0: W.encode_aoi_add(other)})
+        # ...and about the NPCs on the map
+        for npc in self.server.world.npcs_in(map_id):
+            s.push(P.NPC_CREATE, {0: npc.blob()})
 
         # announce the new arrival
         self.server.world.broadcast(map_id, P.AOI_ADD,
                                     {0: W.encode_aoi_add(wp)},
                                     exclude=row["id"])
         self.server.world.join(wp)
-
-        # confirm entry with the player's own spawn data
-        s.respond(msg, {0: W.encode_main_player_create(wp)})
         log.info("%s entered map %s (line %s)", row["name"], map_id, line_index)
 
     async def h_move(self, s: Session, msg) -> None:
@@ -502,7 +569,7 @@ class Handlers:
             for g in shop["goods"]:
                 if g["goods_id"] == goods_id:
                     good = g
-        if good is None:
+        if good is None or "item_id" not in good:
             s.respond(msg, {0: 2})   # unknown goods
             return
         total = good["price"] * count
@@ -518,3 +585,820 @@ class Handlers:
         self._progress_buy_missions(s, char_id, good["item_id"], good["count"] * count)
         log.info("char %d bought goods %d x%d for %d", char_id, goods_id,
                  count, total)
+
+    # ------------------------------------------------------------------
+    # inventory / equipment
+    # ------------------------------------------------------------------
+    def _sync_badges(self, s: Session, char_id: int) -> None:
+        badges = [item for item in self.server.db.list_items(char_id)
+                  if economy.ITEMS.get(item["item_id"], {}).get("type") == "badge"]
+        blobs = [P.encode_item_stack(r["item_id"], r["count"]) for r in badges]
+        s.push(P.SYNC_BADGEPACK_ITEM, {0: sproto.encode_object_array(blobs)})
+
+    def _sync_fashion(self, s: Session, char_id: int) -> None:
+        fashion = [item for item in self.server.db.list_items(char_id)
+                   if economy.ITEMS.get(item["item_id"], {}).get("type") == "fashion"]
+        blobs = [P.encode_item_stack(r["item_id"], r["count"]) for r in fashion]
+        s.push(P.SYNC_FASHION_BACKPACK_ITEM,
+               {0: sproto.encode_object_array(blobs)})
+
+    async def h_equip_item(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        item_id = msg.body.get(0)
+        idef = economy.ITEMS.get(item_id)
+        if idef is None or idef.get("type") != "equipment":
+            s.respond(msg, {0: 2})
+            return
+        if db.get_item_count(char_id, item_id) < 1:
+            s.respond(msg, {0: 3})
+            return
+        db.set_equipped(char_id, idef["slot"], item_id)
+        s.respond(msg, {0: 0})
+        self._sync_backpack(s, char_id)
+
+    def _unequip_slot(self, s: Session, msg, slot: int) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        if db.get_equipped(row["id"], slot) is None:
+            s.respond(msg, {0: 2})
+            return
+        db.set_equipped(row["id"], slot, None)
+        s.respond(msg, {0: 0})
+
+    async def h_unequip_item(self, s: Session, msg) -> None:
+        await self._unequip_slot(s, msg, 1)  # armor
+
+    async def h_equip_badge(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        item_id = msg.body.get(0)
+        idef = economy.ITEMS.get(item_id)
+        if idef is None or idef.get("type") != "badge":
+            s.respond(msg, {0: 2})
+            return
+        if db.get_item_count(char_id, item_id) < 1:
+            s.respond(msg, {0: 3})
+            return
+        db.set_equipped(char_id, 2, item_id)
+        s.respond(msg, {0: 0})
+        self._sync_badges(s, char_id)
+
+    async def h_unequip_badge(self, s: Session, msg) -> None:
+        await self._unequip_slot(s, msg, 2)
+
+    async def h_equip_fashion(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        item_id = msg.body.get(0)
+        idef = economy.ITEMS.get(item_id)
+        if idef is None or idef.get("type") != "fashion":
+            s.respond(msg, {0: 2})
+            return
+        if db.get_item_count(char_id, item_id) < 1:
+            s.respond(msg, {0: 3})
+            return
+        db.set_equipped(char_id, 3, item_id)
+        s.respond(msg, {0: 0})
+        self._sync_fashion(s, char_id)
+
+    async def h_unequip_fashion(self, s: Session, msg) -> None:
+        await self._unequip_slot(s, msg, 3)
+
+    async def h_open_item_package(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        item_id = msg.body.get(0)
+        idef = economy.ITEMS.get(item_id)
+        if idef is None or idef.get("type") != "package":
+            s.respond(msg, {0: 2})
+            return
+        if db.get_item_count(char_id, item_id) < 1:
+            s.respond(msg, {0: 3})
+            return
+        db.add_item(char_id, item_id, -1)
+        contents = idef.get("contents", {})
+        gold = idef.get("gold", 0)
+        if gold:
+            db.add_currency(char_id, economy.CURRENCY_GOLD, gold)
+        stacks = []
+        for iid, cnt in contents.items():
+            db.add_item(char_id, iid, cnt)
+            stacks.append(P.encode_item_stack(iid, cnt))
+        s.respond(msg, {0: 0, 1: sproto.encode_object_array(stacks)})
+        self._sync_backpack(s, char_id)
+
+    async def h_request_update_storagepack(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        rows = self.server.db.list_storage(row["id"])
+        blobs = [P.encode_item_stack(r["item_id"], r["count"]) for r in rows]
+        s.respond(msg, {0: sproto.encode_object_array(blobs)})
+
+    async def h_put_item_storagepack(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        item_id = msg.body.get(0)
+        count = msg.body.get(1, 1)
+        if db.get_item_count(char_id, item_id) < count:
+            s.respond(msg, {0: 2})
+            return
+        db.add_item(char_id, item_id, -count)
+        db.add_storage(char_id, item_id, count)
+        s.respond(msg, {0: 0})
+        self._sync_backpack(s, char_id)
+
+    async def h_take_item_storagepack(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        item_id = msg.body.get(0)
+        count = msg.body.get(1, 1)
+        if db.get_storage_count(char_id, item_id) < count:
+            s.respond(msg, {0: 2})
+            return
+        db.add_storage(char_id, item_id, -count)
+        db.add_item(char_id, item_id, count)
+        s.respond(msg, {0: 0})
+        self._sync_backpack(s, char_id)
+
+    async def h_request_random_name(self, s: Session, msg) -> None:
+        sex = msg.body.get(0, 0)
+        first = ["Johnny", "Vito", "Lucky", "Tony", "Frankie", "Sonny"] \
+            if not sex else ["Maria", "Angela", "Rosa", "Gina", "Carmela"]
+        last = ["Gambino", "Corleone", "Moretti", "Santoro", "Bianchi"]
+        import random
+        name = "%s %s" % (random.choice(first), random.choice(last))
+        s.respond(msg, {0: name})
+
+    async def h_change_item_state(self, s: Session, msg) -> None:
+        # state toggle (e.g. lock item) — acknowledged, stored in progress
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        item_id = msg.body.get(0)
+        state = msg.body.get(1, 0)
+        self.server.db.set_progress(row["id"], "item_state_%d" % item_id, state)
+        s.respond(msg, {0: 0})
+
+    # ------------------------------------------------------------------
+    # combat / npcs
+    # ------------------------------------------------------------------
+    def _player_attack_power(self, char_id: int) -> int:
+        db = self.server.db
+        attack = economy.PLAYER_BASE_ATTACK
+        weapon = db.get_equipped(char_id, 0)
+        if weapon is not None:
+            attack += economy.ITEMS.get(weapon, {}).get("power", 0)
+        badge = db.get_equipped(char_id, 2)
+        if badge is not None:
+            attack += economy.ITEMS.get(badge, {}).get("power", 0)
+        return attack
+
+    def _sync_skills(self, s: Session, char_id: int) -> None:
+        rows = self.server.db.list_skills(char_id)
+        blobs = [P.encode_skill_info(r["skill_id"], r["level"]) for r in rows]
+        s.push(P.SYNC_SKILL_INFO, {0: sproto.encode_object_array(blobs)})
+
+    async def h_skill_use(self, s: Session, msg) -> None:
+        wp = s.world_player
+        if wp is None:
+            return
+        skill_id = msg.body.get(0)
+        target = msg.body.get(1)
+        self.server.world.broadcast(
+            wp.map_id, P.RET_SKILL_USE,
+            {0: skill_id, 1: wp.char_id}, exclude=None)
+
+    async def h_attack_local_npc(self, s: Session, msg) -> None:
+        db = self.server.db
+        wp = s.world_player
+        if wp is None:
+            return
+        npc_id = msg.body.get(0)
+        skill_id = msg.body.get(1, 1)
+        npc = self.server.world.get_npc(wp.map_id, npc_id)
+        if npc is None:
+            s.respond(msg, {0: 2})   # unknown
+            return
+        if npc.dead:
+            # lazy respawn: the NPC is back at full strength for this fight
+            self.server.world.respawn_npc(npc)
+        skill = economy.SKILLS.get(skill_id, {"damage": 5})
+        skill_level = db.get_skill(wp.char_id, skill_id)
+        if skill_level is not None:
+            skill = dict(skill)
+            skill["damage"] += 5 * (skill_level["level"] - 1)
+        attack = self._player_attack_power(wp.char_id)
+        damage = attack + skill["damage"]
+        npc.hp = max(0, npc.hp - damage)
+        # damage popup to everyone on the map
+        self.server.world.broadcast(
+            wp.map_id, P.SHOW_DAMAGE_BOARD,
+            {0: npc_id, 1: damage, 2: wp.char_id})
+        if npc.hp > 0:
+            s.respond(msg, {0: 0})
+            # the NPC fights back
+            hp, max_hp = db.get_hp(wp.char_id)
+            counter = self.server.world.npc_attack(npc)
+            hp = db.set_hp(wp.char_id, hp - counter)
+            self.server.world.broadcast(
+                wp.map_id, P.ACCEPT_DAMGE,
+                {0: npc_id, 1: counter, 2: wp.char_id})
+            if hp <= 0:
+                wp.dead = True
+                self.server.world.broadcast(
+                    wp.map_id, P.NOTICE_RELIFE_PLAYER, {0: wp.char_id})
+            return
+        # --- npc died ---
+        exp, gold, drops = self.server.world.kill_npc(npc, wp.char_id, wp.name)
+        self.server.world.broadcast(
+            wp.map_id, P.LOCAL_NPC_DIE, {0: npc_id})
+        s.respond(msg, {0: 0})
+        for item_id, cnt in drops.items():
+            db.add_item(wp.char_id, item_id, cnt)
+            self.server.world.broadcast(
+                wp.map_id, P.DROP_ITEM_INFO, {0: item_id, 1: cnt, 2: wp.char_id})
+        if gold:
+            db.add_currency(wp.char_id, economy.CURRENCY_GOLD, gold)
+        level, exp_left = db.add_exp(wp.char_id, exp)
+        s.push(P.SYNC_COMMON_DATA, {0: level, 1: exp_left, 2: gold, 3: exp})
+        self._sync_backpack(s, wp.char_id)
+        log.info("char %d killed npc %d (exp +%d gold +%d)", wp.char_id,
+                 npc_id, exp, gold)
+
+    async def h_local_npc_die(self, s: Session, msg) -> None:
+        # client-confirmed npc death (copy scenes); treat as an attack result
+        await self.h_attack_local_npc(s, msg)
+
+    async def h_accept_damage(self, s: Session, msg) -> None:
+        wp = s.world_player
+        if wp is None:
+            return
+        # accept_damge {attacker(0), damage(1), hp(2)} — mirror to the map
+        self.server.world.broadcast(wp.map_id, P.ACCEPT_DAMGE,
+                                    dict(msg.body), exclude=None)
+        s.respond(msg, {})
+
+    async def h_relife_player(self, s: Session, msg) -> None:
+        db = self.server.db
+        wp = s.world_player
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        max_hp = db.get_hp(row["id"])[1]
+        db.set_hp(row["id"], max_hp)
+        if wp is not None:
+            wp.dead = False
+        s.respond(msg, {0: 0})
+        if wp is not None:
+            self.server.world.broadcast(
+                wp.map_id, P.AOI_RELIFE_PLAYER, {0: wp.char_id})
+
+    async def h_skill_level_up(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        skill_id = msg.body.get(0)
+        if skill_id not in economy.SKILLS:
+            s.respond(msg, {0: 2})
+            return
+        gold = db.get_currency(char_id, economy.CURRENCY_GOLD)
+        if gold < economy.SKILL_LEVELUP_COST:
+            s.respond(msg, {0: 3})
+            return
+        db.add_currency(char_id, economy.CURRENCY_GOLD,
+                        -economy.SKILL_LEVELUP_COST)
+        level = db.learn_skill(char_id, skill_id)
+        s.respond(msg, {0: 0})
+        self._sync_skills(s, char_id)
+
+    # ------------------------------------------------------------------
+    # guilds
+    # ------------------------------------------------------------------
+    def _guild_blob(self, g) -> bytes:
+        members = self.server.db.guild_member_count(g["id"])
+        return P.encode_guild_info(g["id"], g["name"], g["leader"],
+                                   members, g["notice"], g["gold"], g["level"])
+
+    def _require_guild(self, s: Session):
+        row = self._require_char(s)
+        if row is None:
+            return None, None
+        g = self.server.db.get_guild_by_member(row["id"])
+        return row, g
+
+    async def h_guild_create(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        if db.get_guild_by_member(row["id"]) is not None:
+            s.respond(msg, {0: 2})   # already in a guild
+            return
+        name = msg.body.get(0, "")
+        g = db.create_guild(name, row["name"])
+        if g is None:
+            s.respond(msg, {0: 3})   # name taken
+            return
+        db.add_guild_member(g["id"], row["id"], row["name"], job=0)
+        db.add_guild_log(g["id"], "%s founded the guild" % row["name"])
+        s.respond(msg, {0: 0, 1: g["id"]})
+
+    async def h_guild_join(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        if db.get_guild_by_member(row["id"]) is not None:
+            s.respond(msg, {0: 2})
+            return
+        guild_id = msg.body.get(0)
+        g = db.get_guild(guild_id)
+        if g is None:
+            s.respond(msg, {0: 3})
+            return
+        db.add_guild_request(guild_id, row["id"], row["name"])
+        s.respond(msg, {0: 0})
+        # notify online officers/leader
+        for m in db.list_guild_members(guild_id):
+            if m["job"] in (0, 1):
+                other = self.server.world.get_player_anywhere(m["char_id"])
+                if other is not None:
+                    other.conn.push(P.SYNC_GUILD_NEW_MEMBER,
+                                    {0: row["name"]})
+
+    async def h_guild_leave(self, s: Session, msg) -> None:
+        db = self.server.db
+        row, g = self._require_guild(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        if g is None:
+            s.respond(msg, {0: 2})
+            return
+        db.remove_guild_member(g["id"], row["id"])
+        db.add_guild_log(g["id"], "%s left the guild" % row["name"])
+        s.respond(msg, {0: 0})
+
+    async def h_guild_kick(self, s: Session, msg) -> None:
+        db = self.server.db
+        row, g = self._require_guild(s)
+        if row is None or g is None:
+            s.respond(msg, {0: 1})
+            return
+        me = db.get_guild_member(g["id"], row["id"])
+        if me is None or me["job"] not in (0, 1):
+            s.respond(msg, {0: 2})   # no permission
+            return
+        target_name = msg.body.get(0, "")
+        target = None
+        for m in db.list_guild_members(g["id"]):
+            if m["name"] == target_name:
+                target = m
+        if target is None or target["job"] == 0:
+            s.respond(msg, {0: 3})
+            return
+        db.remove_guild_member(g["id"], target["char_id"])
+        db.add_guild_log(g["id"], "%s kicked %s" % (row["name"], target_name))
+        s.respond(msg, {0: 0})
+
+    async def h_guild_job_change(self, s: Session, msg) -> None:
+        db = self.server.db
+        row, g = self._require_guild(s)
+        if row is None or g is None:
+            s.respond(msg, {0: 1})
+            return
+        me = db.get_guild_member(g["id"], row["id"])
+        if me is None or me["job"] != 0:
+            s.respond(msg, {0: 2})   # leader only
+            return
+        target_name = msg.body.get(0, "")
+        job = msg.body.get(1, 2)
+        for m in db.list_guild_members(g["id"]):
+            if m["name"] == target_name:
+                db.set_guild_job(g["id"], m["char_id"], job)
+                s.respond(msg, {0: 0})
+                return
+        s.respond(msg, {0: 3})
+
+    async def h_guild_req_list(self, s: Session, msg) -> None:
+        db = self.server.db
+        row, g = self._require_guild(s)
+        if row is None or g is None:
+            s.respond(msg, {0: 1})
+            return
+        reqs = db.list_guild_requests(g["id"])
+        blobs = [P.encode_guild_member(r["name"], 2) for r in reqs]
+        s.respond(msg, {0: sproto.encode_object_array(blobs)})
+
+    async def h_guild_req_info(self, s: Session, msg) -> None:
+        row, g = self._require_guild(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        if g is None:
+            s.respond(msg, {0: 2})
+            return
+        s.respond(msg, {0: self._guild_blob(g)})
+
+    async def h_guild_approve(self, s: Session, msg) -> None:
+        db = self.server.db
+        row, g = self._require_guild(s)
+        if row is None or g is None:
+            s.respond(msg, {0: 1})
+            return
+        me = db.get_guild_member(g["id"], row["id"])
+        if me is None or me["job"] not in (0, 1):
+            s.respond(msg, {0: 2})
+            return
+        target_name = msg.body.get(0, "")
+        approve = msg.body.get(1, 0)
+        target = None
+        for r in db.list_guild_requests(g["id"]):
+            if r["name"] == target_name:
+                target = r
+        if target is None:
+            s.respond(msg, {0: 3})
+            return
+        db.remove_guild_request(g["id"], target["char_id"])
+        if approve:
+            db.add_guild_member(g["id"], target["char_id"], target["name"])
+            db.add_guild_log(g["id"], "%s joined the guild" % target["name"])
+        s.respond(msg, {0: 0})
+
+    async def h_req_guild_notice(self, s: Session, msg) -> None:
+        row, g = self._require_guild(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        if g is None:
+            s.respond(msg, {0: 2})
+            return
+        members = [P.encode_guild_member(m["name"], m["job"], online=self.server
+                                         .world.get_player_anywhere(m["char_id"])
+                                         is not None)
+                   for m in self.server.db.list_guild_members(g["id"])]
+        s.respond(msg, {
+            0: self._guild_blob(g),
+            1: sproto.encode_object_array(members),
+        })
+
+    async def h_req_open_guild_shop(self, s: Session, msg) -> None:
+        row, g = self._require_guild(s)
+        if row is None or g is None:
+            s.respond(msg, {0: 1})
+            return
+        goods = [P.encode_shop_good(item["goods_id"], item["item_id"],
+                                    item["count"], economy.CURRENCY_GOLD,
+                                    item["price"])
+                 for item in economy.GUILD_SHOP]
+        s.respond(msg, {0: 0, 1: sproto.encode_object_array(goods)})
+
+    async def h_req_buy_guild_goods(self, s: Session, msg) -> None:
+        db = self.server.db
+        row, g = self._require_guild(s)
+        if row is None or g is None:
+            s.respond(msg, {0: 1})
+            return
+        goods_id = msg.body.get(0)
+        good = next((x for x in economy.GUILD_SHOP
+                     if x["goods_id"] == goods_id), None)
+        if good is None:
+            s.respond(msg, {0: 2})
+            return
+        if g["gold"] < good["price"]:
+            s.respond(msg, {0: 3})   # guild funds too low
+            return
+        db.add_guild_gold(g["id"], -good["price"])
+        db.add_item(row["id"], good["item_id"], good["count"])
+        s.respond(msg, {0: 0})
+        self._sync_backpack(s, row["id"])
+
+    async def h_guild_log(self, s: Session, msg) -> None:
+        row, g = self._require_guild(s)
+        if row is None or g is None:
+            s.respond(msg, {0: 1})
+            return
+        entries = [sproto.encode_object({0: r["entry"], 1: r["created_at"]})
+                   for r in self.server.db.list_guild_log(g["id"])]
+        s.respond(msg, {0: sproto.encode_object_array(entries)})
+
+    async def h_guild_donate(self, s: Session, msg) -> None:
+        db = self.server.db
+        row, g = self._require_guild(s)
+        if row is None or g is None:
+            s.respond(msg, {0: 1})
+            return
+        amount = msg.body.get(0, 0)
+        if amount <= 0 or db.get_currency(row["id"],
+                                          economy.CURRENCY_GOLD) < amount:
+            s.respond(msg, {0: 2})
+            return
+        db.add_currency(row["id"], economy.CURRENCY_GOLD, -amount)
+        gold = db.add_guild_gold(g["id"], amount)
+        db.add_guild_log(g["id"], "%s donated %d gold" % (row["name"], amount))
+        s.respond(msg, {0: 0, 1: gold})
+
+    async def h_search_guild(self, s: Session, msg) -> None:
+        pattern = msg.body.get(0, "")
+        guilds = self.server.db.search_guilds(pattern)
+        blobs = [self._guild_blob(g) for g in guilds]
+        s.respond(msg, {0: sproto.encode_object_array(blobs)})
+
+    # ------------------------------------------------------------------
+    # friends
+    # ------------------------------------------------------------------
+    def _find_character_by_name(self, name: str):
+        # simple lookup used by friends/mail; fine at revival scale
+        return self.server.db._conn.execute(
+            "SELECT * FROM characters WHERE name = ?", (name,)
+        ).fetchone()
+
+    async def h_add_friend(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        name = msg.body.get(0, "")
+        target = self._find_character_by_name(name)
+        if target is None:
+            s.respond(msg, {0: 2})
+            return
+        db.add_friend(row["id"], target["id"])
+        db.add_friend(target["id"], row["id"])
+        s.respond(msg, {0: 0, 1: name})
+        other = self.server.world.get_player_anywhere(target["id"])
+        if other is not None:
+            other.conn.push(P.NOTICE_ADD_FRIEND, {0: row["name"]})
+
+    async def h_del_friend(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        name = msg.body.get(0, "")
+        target = self._find_character_by_name(name)
+        if target is None:
+            s.respond(msg, {0: 2})
+            return
+        db.remove_friend(row["id"], target["id"])
+        db.remove_friend(target["id"], row["id"])
+        s.respond(msg, {0: 0})
+        other = self.server.world.get_player_anywhere(target["id"])
+        if other is not None:
+            other.conn.push(P.BE_DELETED_FRIEND, {0: row["name"]})
+
+    async def h_ask_character_info(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        name = msg.body.get(0, "")
+        target = self._find_character_by_name(name)
+        if target is None:
+            s.respond(msg, {0: 2})
+            return
+        online = self.server.world.get_player_anywhere(target["id"]) is not None
+        s.respond(msg, {0: P.encode_friend_entry(
+            target["id"], target["name"], target["level"], online)})
+
+    async def h_sync_friend_info(self, s: Session, msg) -> None:
+        await self._push_friend_info(s)
+
+    async def _push_friend_info(self, s: Session) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            return
+        entries = []
+        for f in db.list_friends(row["id"]):
+            fr = db.get_character(f["friend_id"])
+            if fr is None:
+                continue
+            online = self.server.world.get_player_anywhere(fr["id"]) is not None
+            entries.append(P.encode_friend_entry(fr["id"], fr["name"],
+                                                 fr["level"], online))
+        s.push(P.SYN_FRIEND_INFO, {0: sproto.encode_object_array(entries)})
+
+    # ------------------------------------------------------------------
+    # mail
+    # ------------------------------------------------------------------
+    async def h_send_mail(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        to_name = msg.body.get(0, "")
+        title = msg.body.get(1, "")
+        body = msg.body.get(2, "")
+        target = self._find_character_by_name(to_name)
+        if target is None:
+            s.respond(msg, {0: 2})
+            return
+        db.send_mail(target["id"], row["name"], title, body)
+        s.respond(msg, {0: 0})
+        other = self.server.world.get_player_anywhere(target["id"])
+        if other is not None:
+            other.conn.push(P.MAIL_UPDATE,
+                            {0: P.encode_mail(0, row["name"], title, body)})
+
+    async def h_mail_operation(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        mail_id = msg.body.get(0)
+        op = msg.body.get(1, 0)
+        mail = db.get_mail(row["id"], mail_id)
+        if mail is None:
+            s.respond(msg, {0: 2})
+            return
+        if op == 1 and not mail["collected"]:   # collect attachment
+            if mail["gold"]:
+                db.add_currency(row["id"], economy.CURRENCY_GOLD, mail["gold"])
+            if mail["diamond"]:
+                db.add_currency(row["id"], economy.CURRENCY_DIAMOND,
+                                mail["diamond"])
+            db.set_mail_collected(mail_id)
+        elif op == 2:                            # delete
+            db.delete_mail(row["id"], mail_id)
+        s.respond(msg, {0: 0})
+
+    async def h_send_mail_box(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        mails = [P.encode_mail(m["id"], m["sender"], m["title"], m["body"],
+                               m["gold"], m["diamond"], m["collected"])
+                 for m in db.list_mails(row["id"])]
+        s.respond(msg, {0: sproto.encode_object_array(mails)})
+
+    # ------------------------------------------------------------------
+    # daily missions / sign-in
+    # ------------------------------------------------------------------
+    async def h_request_daily_mission(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        blobs = [P.encode_mission_state(mid, 0, 0)
+                 for mid in economy.DAILY_MISSION_IDS]
+        s.respond(msg, {0: sproto.encode_object_array(blobs)})
+
+    def _day_index(self) -> int:
+        return int(time.time()) // 86400
+
+    async def h_sign_week(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        key = "sign_week_%d" % (self._day_index() // 7)
+        days = db.get_progress(row["id"], key)
+        if days >= 7:
+            s.respond(msg, {0: 2, 1: days})   # already signed all week
+            return
+        db.set_progress(row["id"], key, days + 1)
+        reward = 200 * (days + 1)
+        db.add_currency(row["id"], economy.CURRENCY_GOLD, reward)
+        s.respond(msg, {0: 0, 1: days + 1})
+        s.push(P.SHOW_REWARD_ITEMS_TIPS,
+               {0: reward, 1: 0, 2: sproto.encode_object_array([])})
+
+    async def h_sign_30_day(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        key = "sign30_%d" % (self._day_index() // 30)
+        days = db.get_progress(row["id"], key)
+        if days >= 30:
+            s.respond(msg, {0: 2, 1: days})
+            return
+        db.set_progress(row["id"], key, days + 1)
+        reward_diamond = 2 * (days + 1)
+        db.add_currency(row["id"], economy.CURRENCY_DIAMOND, reward_diamond)
+        s.respond(msg, {0: 0, 1: days + 1})
+        s.push(P.SHOW_REWARD_ITEMS_TIPS,
+               {0: 0, 1: reward_diamond, 2: sproto.encode_object_array([])})
+
+    # ------------------------------------------------------------------
+    # mounts / cars
+    # ------------------------------------------------------------------
+    async def h_request_mount_info(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        entries = [P.encode_mount_info(r["car_id"], True, bool(r["using_car"]))
+                   for r in db.list_cars(row["id"])]
+        s.respond(msg, {0: sproto.encode_object_array(entries)})
+
+    async def h_mount_equip(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        db.set_using_car(row["id"], msg.body.get(0))
+        s.respond(msg, {0: 0})
+
+    async def h_mount_unequip(self, s: Session, msg) -> None:
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        s.respond(msg, {0: 0})
+
+    async def h_use_mount(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        car_id = msg.body.get(0)
+        if not db.list_cars(row["id"]):
+            s.respond(msg, {0: 2})   # no car owned
+            return
+        db.set_using_car(row["id"], car_id)
+        s.respond(msg, {0: 0})
+        wp = s.world_player
+        if wp is not None:
+            self.server.world.broadcast(wp.map_id, P.AOI_ADD,
+                                        {0: W.encode_aoi_add(wp)})
+
+    async def h_unuse_mount(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        car = db.list_cars(row["id"])
+        db.set_using_car(row["id"], car[0]["car_id"] if car else None)
+        s.respond(msg, {0: 0})
+
+    async def h_buy_car_shop(self, s: Session, msg) -> None:
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        goods_id = msg.body.get(0)
+        good = None
+        for g in economy.SHOPS.get(9, {"goods": []})["goods"]:
+            if g["goods_id"] == goods_id:
+                good = g
+        if good is None:
+            s.respond(msg, {0: 2})
+            return
+        if db.get_currency(row["id"], good["currency"]) < good["price"]:
+            s.respond(msg, {0: 3})
+            return
+        db.add_currency(row["id"], good["currency"], -good["price"])
+        db.buy_car(row["id"], good["car_id"])
+        s.respond(msg, {0: 0})

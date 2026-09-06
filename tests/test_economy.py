@@ -32,6 +32,9 @@ async def login_and_pick(game_port, name):
                                   {0: "i", 1: "s", 2: "i", 3: "i"})[0]
     await c.rpc(P.CHARACTER_PICK, {0: char_id})
     await c.rpc(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})
+    # drain the post-enter push burst (aoi_add, npc_create, sync_skill_info,
+    # storage sync) so subsequent rpc() calls see their own responses
+    await c.drain(0.4)
     return c, char_id
 
 
@@ -150,9 +153,11 @@ async def test_visit_mission_completes_on_map_entry(server):
     resp = await c.rpc(P.ACCEPT_MISSION, {0: mission_id})
     assert resp.body[0] == 0
 
-    # a move inside the target map advances the mission
+    # a move inside the target map advances the mission (move has no ack;
+    # the server answers with a sync_mission push)
     pos = sproto.encode_object({0: 100, 1: 0, 2: 200, 3: 90})
-    resp = await c.rpc(P.MOVE, {0: pos, 1: 1, 2: 1, 3: 0})
+    await c.send_request(P.MOVE, {0: pos, 1: 1, 2: 1, 3: 0})
+    await asyncio.sleep(0.5)
 
     mrow = srv.db.get_mission(char_id, mission_id)
     assert mrow is not None

@@ -1,17 +1,23 @@
-"""World state: per-map player registry with AOI broadcast helpers.
+"""World state: per-map player + NPC registry with AOI broadcast helpers.
 
 The original game used interest-management pushes (aoi_add / aoi_remove /
 aoi_update_move ...). This revival keeps it simple: every player in the same
-map + line sees every other player in that map + line, and movement/chat are
-broadcast to the map.
+map + line sees every other player and every NPC in that map + line, and
+movement/chat/combat are broadcast to the map.
+
+NPCs are server-simulated: they stand at their spawn point, take damage from
+player attacks, die, drop loot + exp + gold, and respawn after a delay.
 """
 
+import random
+
+from . import economy
 from . import protocol as P
 
 
 class WorldPlayer:
     __slots__ = ("conn", "char_id", "name", "level", "sex", "map_id",
-                 "line_index", "pos", "moving", "walk")
+                 "line_index", "pos", "moving", "walk", "dead")
 
     def __init__(self, conn, char_id: int, name: str, level: int = 1,
                  sex: int = 0) -> None:
@@ -25,6 +31,7 @@ class WorldPlayer:
         self.pos = {"x": 0, "y": 0, "z": 0, "o": 0}
         self.moving = False
         self.walk = True
+        self.dead = False
 
     def movement_blob(self) -> bytes:
         return P._enc.encode_object({
@@ -32,12 +39,45 @@ class WorldPlayer:
         })
 
 
+class WorldNpc:
+    __slots__ = ("npc_id", "kind", "map_id", "pos", "hp", "max_hp",
+                 "dead", "level", "name")
+
+    _next_id = [9000]
+
+    def __init__(self, kind: int, map_id: str, pos: dict) -> None:
+        WorldNpc._next_id[0] += 1
+        self.npc_id = WorldNpc._next_id[0]
+        kind_def = economy.NPC_KINDS[kind]
+        self.kind = kind
+        self.name = kind_def["name"]
+        self.level = kind_def["level"]
+        self.map_id = map_id
+        self.pos = dict(pos)
+        self.max_hp = kind_def["max_hp"]
+        self.hp = self.max_hp
+        self.dead = False
+
+    def blob(self) -> bytes:
+        return P.encode_npc(self.npc_id, self.kind, self.level, self.hp,
+                            self.max_hp, self.pos)
+
+
 class World:
     def __init__(self) -> None:
         # map_id -> {char_id: WorldPlayer}
         self.maps: dict = {}
+        # map_id -> {npc_id: WorldNpc}
+        self.npcs: dict = {}
+        self._spawn_npcs()
 
-    # -- membership -----------------------------------------------------
+    def _spawn_npcs(self) -> None:
+        for map_id, spawns in economy.NPC_SPAWNS.items():
+            for kind, x, y, z in spawns:
+                npc = WorldNpc(kind, map_id, {"x": x, "y": y, "z": z, "o": 0})
+                self.npcs.setdefault(map_id, {})[npc.npc_id] = npc
+
+    # -- players --------------------------------------------------------
     def join(self, player: WorldPlayer) -> None:
         self.maps.setdefault(player.map_id, {})[player.char_id] = player
 
@@ -49,7 +89,7 @@ class World:
                 del self.maps[player.map_id]
         # notify everyone else
         self.broadcast(player.map_id, P.AOI_REMOVE,
-                       {"character": _encode_aoi_remove(player.char_id)},
+                       {0: _encode_aoi_remove(player.char_id)},
                        exclude=player.char_id)
 
     def others(self, map_id: str, exclude_char_id: int):
@@ -59,6 +99,18 @@ class World:
     def get(self, map_id: str, char_id: int):
         return self.maps.get(map_id, {}).get(char_id)
 
+    def get_player_anywhere(self, char_id: int):
+        for m in self.maps.values():
+            if char_id in m:
+                return m[char_id]
+        return None
+
+    def npcs_in(self, map_id: str):
+        return list(self.npcs.get(map_id, {}).values())
+
+    def get_npc(self, map_id: str, npc_id: int):
+        return self.npcs.get(map_id, {}).get(npc_id)
+
     # -- messaging ------------------------------------------------------
     def broadcast(self, map_id: str, tag: int, body: dict,
                   exclude: int = None, session: int = None) -> None:
@@ -67,6 +119,31 @@ class World:
             if exclude is not None and p.char_id == exclude:
                 continue
             p.conn.send_raw(frame)
+
+    # -- combat -----------------------------------------------------------
+    def player_attack(self, player: WorldPlayer, attack: int) -> int:
+        return max(1, attack + random.randint(-2, 2))
+
+    def npc_attack(self, npc: WorldNpc) -> int:
+        kind_def = economy.NPC_KINDS[npc.kind]
+        return max(1, kind_def["damage"] + random.randint(-1, 1))
+
+    def kill_npc(self, npc: WorldNpc, char_id: int, char_name: str):
+        """Kill an NPC; returns (exp, gold, drops {item_id: count})."""
+        kind_def = economy.NPC_KINDS[npc.kind]
+        npc.dead = True
+        npc.hp = 0
+        rng = random.Random()
+        drops = {}
+        for item_id, (chance, count) in kind_def["loot"].items():
+            if rng.random() < chance:
+                drops[item_id] = drops.get(item_id, 0) + count
+        return kind_def["exp"], kind_def["gold"], drops
+
+    def respawn_npc(self, npc: WorldNpc) -> None:
+        kind_def = economy.NPC_KINDS[npc.kind]
+        npc.dead = False
+        npc.hp = npc.max_hp
 
 
 # --- wire blob helpers shared by handlers -----------------------------------

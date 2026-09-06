@@ -19,11 +19,14 @@ python3 -m server.main   # gate :9777 + game server :9555
 Ongoing focus:
 
 - Client compatibility testing with the v1.19 APK
-- Implementing the remaining game systems (PvP, rides, guilds)
+- Implementing the remaining game systems (PvP arenas, copy scenes, tower,
+  rankings, dances)
 
 Implemented game systems: login/character flow, world AOI + movement sync,
-chat, missions (accept/progress/complete/rewards), shops (browse/buy),
-backpack + currency persistence.
+chat, missions + daily missions, shops + car shop, full inventory (weapons,
+armor, badges, fashion, storage, item packages), NPC combat with loot/exp/
+level-ups, skills, respawn, guilds (create/join/donate/guild shop/ranks),
+friends, mail, sign-in rewards, and car/mount ownership.
 
 ---
 

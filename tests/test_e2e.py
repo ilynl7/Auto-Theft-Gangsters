@@ -37,14 +37,38 @@ class Client:
         return self.session_counter
 
     async def recv_response(self, timeout: float = 5.0):
-        data = await asyncio.wait_for(self.reader.read(8192), timeout)
-        frames = self.decoder.feed(data)
-        assert frames, "no frame received"
-        return P.parse_frame(frames[0], response=True)
+        """Receive the response matching our session, skipping server pushes
+        (frames whose Package carries a type but no session)."""
+        import time
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, "no response received"
+            data = await asyncio.wait_for(self.reader.read(8192), remaining)
+            frames = self.decoder.feed(data)
+            for payload in frames:
+                frame = P.parse_frame(payload, response=True)
+                if frame.type is not None and frame.session is not None \
+                        and frame.session == self.session_counter:
+                    return frame
+                # else: server push (aoi/npc/sync/...) — skip
 
     async def rpc(self, tag: int, body: dict = None, timeout: float = 5.0):
         await self.send_request(tag, body)
         return await self.recv_response(timeout)
+
+    async def drain(self, quiet: float = 0.3, timeout: float = 2.0):
+        """Read and discard frames until the socket is quiet for `quiet` s."""
+        import time
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                data = await asyncio.wait_for(self.reader.read(8192), quiet)
+                if not data:
+                    break
+                self.decoder.feed(data)   # discard
+            except asyncio.TimeoutError:
+                break
 
     async def close(self):
         self.writer.close()

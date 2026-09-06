@@ -63,10 +63,50 @@ Tags handled (see `server/protocol.py`):
   `complete_mission` (113) / `ret_complete_mission` (521),
   `abandon_mission` (114) / `ret_abandon_mission` (522), with state pushed
   via `sync_mission` (519) and rewards via `show_reward_items_tips` (638).
+  Daily missions via `request_daily_mission` (121) / `send_daily_mission` (530).
 - **Shop**: `ask_shop_list` (143) / `ret_ask_shop_list` (554),
-  `buy_shop_item` (144) / `ret_buy_shop_item` (652).
+  `buy_shop_item` (144) / `ret_buy_shop_item` (652), plus car shop via
+  `buy_car_shop` (323) / `ret_buy_car_shop` (691).
 - **Items**: `use_item` (115) / `ret_use_item` (526), `sell_item` (129),
   backpack sync via `sync_backpack_item` (592) and `update_item` (525).
+- **Equipment**: `equip_item` (116), `unequip_item` (117), `equip_badge` (197),
+  `unequip_badge` (198), `equip_fashion_item` (221),
+  `unequip_fashion_item` (222), badge/fashion sync pushes (604 / 616),
+  equip-slot based weapon/armor/badge/fashion with combat stat effects.
+- **Storage + packages**: `request_update_storagepack` (139) /
+  `ret_request_update_storagepack` (550), `put_item_storagepack` (140),
+  `take_item_storagepack` (141), `open_item_package` (224) /
+  `ret_open_item_package` (617), `change_item_state` (240),
+  `request_random_name` (118).
+- **NPCs + combat**: NPCs spawn per map and are pushed with `npc_create` (509)
+  on map entry. `attack_local_npc` (317) applies weapon/badge/skill damage,
+  broadcasts `show_damage_board` (511), NPCs fight back via
+  `accept_damge` (111), die via `local_npc_die` (307), drop loot via
+  `drop_item_info` (527), and grant exp/gold (level-ups pushed via
+  `sync_common_data` 614). NPCs lazily respawn at full HP.
+- **Skills**: `skill_use` (102) broadcast via `ret_skill_use` (508),
+  `skill_level_up` (130) with gold costs, `sync_skill_info` (540) push.
+- **Player life**: `relife_player` (132) respawn flow with
+  `aoi_relife_player` (512) / `notice_relife_player` (618); hp/max_hp per
+  character with level-based growth.
+- **Guilds**: `guild_create` (146), `guild_join` (147) with join requests,
+  `guild_approve_resverve` (154), `guild_kick` (149), `guild_job_change`
+  (150) (leader/officer/member roles), `guild_donate` (175), guild shop
+  (`req_open_guild_shop` 171 / `req_buy_guild_goods` 172, funded by
+  donations), `guild_log` (174), `search_guild` (176), notices + member
+  info, `sync_guild_new_member` (580) push.
+- **Friends**: `add_friend` (124) / `del_friend` (125) (bidirectional),
+  `ask_character_info` (142), friend list push `syn_friend_info` (538),
+  online/offline status, `notice_add_friend` (536) / `be_deleted_friend`
+  (537) pushes.
+- **Mail**: `send_mail` (122), mailbox `send_mail_box` (284),
+  `mail_operation` (123) (collect attachment / delete),
+  `mail_update` (531) push for online recipients.
+- **Sign-in**: `sign_week` (255) and `sign_30_day` (254) with daily
+  gold/diamond rewards, `request_daily_mission` (121).
+- **Cars/mounts**: `request_mount_info` (235) / `ret_mount_info` (630),
+  `mount_equip` (236), `use_mount` (238) / `unuse_mount` (239) with AOI
+  re-announce, car ownership persisted per character.
 
 ### Economy content and provisional schemas
 
@@ -91,12 +131,14 @@ repo preserved no `SprotoType` classes for them, so their field layouts are
 - `sync_backpack_item` push: `{items(0)}` = array of `{item_id(0), count(1)}`
 - `show_reward_items_tips` push: `{gold(0), diamond(1), items(2)}`
 
-Game content (shops, missions, item catalog) lives in `server/economy.py` —
+Game content (shops, missions, item catalog, NPC kinds/spawns, skills,
+cars, guild shop) lives in `server/economy.py` —
 small default tables until `Bundle/Data/Data.bundle` is fully parsed; the
-handlers are fully data-driven, so new content only requires extending those
-tables. Mission types: `buy` (progresses on shop purchases of the target
-item) and `visit` (progresses on entering the target map); missions can chain
-via the `next` field and pay gold/diamond/item rewards.
+handlers and NPC simulation are fully data-driven, so new content only
+requires extending those tables. Mission types: `buy` (progresses on shop
+purchases of the target item) and `visit` (progresses on entering the target
+map); missions can chain via the `next` field and pay gold/diamond/item
+rewards.
 
 ## Architecture
 
@@ -104,10 +146,12 @@ via the `next` field and pay gold/diamond/item rewards.
 server/
 ├── main.py      asyncio entry point: gate + game listeners, dispatcher
 ├── session.py   per-connection state + frame pump
-├── handlers.py  protocol logic (login flow, world, chat, missions, shop)
-├── world.py     per-map player registry, AOI broadcast helpers
-├── economy.py   shop catalog + mission definitions (content tables)
-├── db.py        SQLite accounts, characters, backpack, missions persistence
+├── handlers.py  protocol logic (login, world, combat, economy, guilds,
+│                friends, mail, sign-in, mounts)
+├── world.py     per-map player + NPC registry, AOI broadcast, NPC combat sim
+├── economy.py   content tables: items, shops, missions, NPCs, skills, cars
+├── db.py        SQLite persistence (accounts, characters, inventory,
+│                equipment, guilds, friends, mail, skills, progress)
 ├── protocol.py  tag constants, typed request/response schemas
 ├── sproto.py    SprotoPack compression + sproto binary codec + framing
 └── config.py    environment-based configuration
@@ -130,6 +174,12 @@ python3 -m pytest tests/ -q
   purchase (currency debit, backpack credit), mission accept → auto-complete
   on purchase → claim reward → chained mission → abandon, visit missions via
   map movement, and item consumption.
+- `tests/test_game_systems.py` — end-to-end coverage of the full game
+  systems: NPC spawn pushes, combat (attack → damage → kill → exp/gold/loot),
+  equip/unequip (weapon/armor/badge/fashion), storage pack, item packages,
+  guilds (create/join/approve/donate/guild-shop/kick/search), friends
+  (add/info/delete), mail (send/mailbox/collect/delete), sign-in rewards,
+  skill level-up, and car purchase/use.
 
 ## What works with a real client
 
@@ -140,10 +190,11 @@ python3 -m pytest tests/ -q
   world and other players see each other (`aoi_add`/movement/`aoi_remove`).
 - World chat and heartbeat.
 
-Character persistence (position, level, name), currency (gold/diamond),
-backpack and mission state are stored in SQLite and restored on re-entry.
-Rides/PvP and the remaining ~370 protocol tags are not yet implemented;
-unknown tags are logged, not crashed on.
+Character persistence (position, level, exp, hp, name, car), currency
+(gold/diamond), backpack, storage, equipment slots, skills, missions, guild
+membership, friends and mail are stored in SQLite and restored on re-entry.
+Copy scenes/PvP arenas/tower/rankings and the remaining ~330 protocol tags
+are not yet implemented; unknown tags are logged, not crashed on.
 
 ## Wire protocol summary (recovered from Assembly-CSharp.dll)
 
