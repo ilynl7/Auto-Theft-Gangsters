@@ -49,12 +49,22 @@ class Client:
                 break
             if not data:
                 break
-            for payload in self.decoder.feed(data):
-                frame = self._parse(payload, self.pending)
-                if frame.type is not None and frame.session is None:
-                    if frame.type == want_type:
-                        return frame
-                    self.pushes.append(frame)
+            # decode the whole batch FIRST so a mid-batch match doesn't
+            # discard the frames decoded after it
+            batch = [self._parse(p, self.pending)
+                     for p in self.decoder.feed(data)]
+            rest = []
+            match = None
+            for frame in batch:
+                if (match is None and frame.type is not None
+                        and frame.session is None
+                        and frame.type == want_type):
+                    match = frame
+                elif frame.type is not None and frame.session is None:
+                    rest.append(frame)
+            self.pushes.extend(rest)
+            if match is not None:
+                return match
         return None
 
     async def send_request(self, tag: int, body: dict = None):
@@ -351,4 +361,41 @@ async def test_real_client_dispatch_session_only_responses(server):
     # type and a session (that is what froze the real client)
     resp = await raw_roundtrip(P.LOGIN, {0: session_id, 1: account_id})
     assert resp.type is None and resp.body[0] == P.LOGIN
+    await c.close()
+
+
+@pytest.mark.asyncio
+async def test_real_client_world_entry_flow(server):
+    """Regression: the real client never sends enter_map — the SERVER pushes
+    enter_map(503) after character_pick, the client loads the scene, sends
+    map_ready(100), and only then receives main_player_create(504) + npc
+    burst (NetReceiver handlers). A server waiting for an enter_map request
+    deadlocks the loading widget after character creation."""
+    srv, gate_port, game_port = server
+    c = await _connect(game_port)
+    resp = await c.rpc(P.VISITOR, {})
+    account_id = sproto.as_str(resp.body[0])
+    key = sproto.as_str(resp.body[1])
+    resp = await c.rpc(P.VERFIY, {0: account_id, 1: key, 2: "14119"})
+    session_id = resp.body[1]
+    await c.rpc(P.LOGIN, {0: session_id, 1: account_id})
+    general = sproto.encode_object({0: "RealFlow", 2: 0})
+    resp = await c.rpc(P.CHARACTER_CREATE, {0: general})
+    char_id = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
+                                  CHAR_OVERVIEW_SPEC)[0]
+
+    # pick, then expect the enter_map PUSH (not a response)
+    await c.rpc(P.CHARACTER_PICK, {0: char_id})
+    em = await c.next_push(P.ENTER_MAP, timeout=3)
+    assert em is not None, "server must push enter_map after pick"
+    assert sproto.as_str(em.body[0]) == "1"
+    assert em.body[1] == 0 and em.body[2] == 1
+
+    # client answers with map_ready, then receives the world
+    await c.send_request(P.MAP_READY, {})
+    mpc = await c.next_push(P.MAIN_PLAYER_CREATE, timeout=3)
+    assert mpc is not None, "main_player_create must follow map_ready"
+    npc_push = await c.next_push(P.NPC_CREATE, timeout=3)
+    assert npc_push is not None, "map NPCs must be pushed after map_ready"
+    assert srv.db.get_character(char_id)["name"] == "RealFlow"
     await c.close()

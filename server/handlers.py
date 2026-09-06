@@ -331,12 +331,56 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
                {0: sproto.encode_object_array(
                    [P.encode_item_stack(r["item_id"], r["count"])
                     for r in rows_storage])})
+        # kick off the server-driven world entry (enter_map push)
+        self._begin_world_entry(s, row)
 
     async def h_map_ready(self, s: Session, msg) -> None:
-        # Client finished loading; nothing to do server-side.
-        s.respond(msg, {})
+        # Client finished loading the map scene (sent after our enter_map
+        # push). Deliver the world contents: own player, then everyone
+        # already here, then the map NPCs.
+        wp = getattr(s, "pending_world_player", None)
+        if wp is None:
+            return
+        s.pending_world_player = None
+        s.world_player = wp
+        s.push(P.MAIN_PLAYER_CREATE, {0: W.encode_main_player_create(wp)})
+        for other in self.server.world.others(wp.map_id, wp.char_id):
+            s.push(P.AOI_ADD, {0: W.encode_aoi_add(other)})
+        for npc in self.server.world.npcs_in(wp.map_id):
+            s.push(P.NPC_CREATE, {0: npc.blob()})
+        self.server.world.join(wp)
+        log.info("%s entered map %s (line %s)", wp.name, wp.map_id,
+                 wp.line_index)
+
+    def _begin_world_entry(self, s: Session, row) -> None:
+        """Start the server-driven world entry for a picked character.
+
+        Real client flow (NetReceiver): the SERVER pushes enter_map(503)
+        {mapInfoId, line_index, line_count}; the client loads the map scene
+        and answers with map_ready(100); the server then pushes
+        main_player_create(504) + the aoi/npc bursts. enter_map has no
+        request schema — a server that waits for the client to request it
+        deadlocks the loading widget.
+        """
+        map_id = row["map_id"] or "1"
+        wp = W.WorldPlayer(s, row["id"], row["name"], row["level"], row["sex"])
+        wp.map_id = map_id
+        wp.line_index = 0
+        wp.pos = {
+            "x": row["pos_x"], "y": row["pos_y"],
+            "z": row["pos_z"], "o": row["pos_o"],
+        }
+        s.pending_world_player = wp
+        s.push(P.ENTER_MAP, {
+            0: map_id,          # mapInfoId (string)
+            1: 0,               # line_index
+            2: 1,               # line_count
+        })
 
     async def h_enter_map(self, s: Session, msg) -> None:
+        # Legacy request form (tests / reconnect helpers). The real client
+        # never requests enter_map — the server pushes it after pick, and
+        # the client answers with map_ready.
         map_id = msg.body.get(0, "1")
         line_index = msg.body.get(1, 0)
         row = getattr(s, "picked_character", None)
@@ -354,24 +398,17 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             "x": row["pos_x"], "y": row["pos_y"],
             "z": row["pos_z"], "o": row["pos_o"],
         }
-        s.world_player = wp
-
-        # confirm entry with the player's own spawn data FIRST (the client
-        # dispatches responses by session id, pushes by type)
+        s.pending_world_player = wp
         s.respond(msg, {0: W.encode_main_player_create(wp)})
-
-        # then tell the entering player about everyone already here
         for other in self.server.world.others(map_id, row["id"]):
             s.push(P.AOI_ADD, {0: W.encode_aoi_add(other)})
-        # ...and about the NPCs on the map
         for npc in self.server.world.npcs_in(map_id):
             s.push(P.NPC_CREATE, {0: npc.blob()})
-
-        # announce the new arrival
         self.server.world.broadcast(map_id, P.AOI_ADD,
                                     {0: W.encode_aoi_add(wp)},
                                     exclude=row["id"])
         self.server.world.join(wp)
+        s.world_player = wp
         log.info("%s entered map %s (line %s)", row["name"], map_id, line_index)
 
     async def h_move(self, s: Session, msg) -> None:
