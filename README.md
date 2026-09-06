@@ -8,14 +8,18 @@ The goal of this project is to understand how the original client works, recover
 
 ## Project Status
 
-🚧 **Research Phase**
+✅ **Revival server implemented** — a protocol-compatible Python backend now
+lives in [`server/`](server/) with docs in
+[`research/server/README.md`](research/server/README.md).
 
-Current focus:
+```bash
+python3 -m server.main   # gate :9777 + game server :9555
+```
 
-- APK analysis
-- Client structure recovery
-- Network protocol investigation
-- Server architecture research
+Ongoing focus:
+
+- Client compatibility testing with the v1.19 APK
+- Implementing the remaining game systems (missions, shops, PvP, rides)
 
 ---
 
