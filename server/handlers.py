@@ -17,6 +17,7 @@ from . import world as W
 from .session import Session
 from .handlers_pvp import PvpHandlersMixin
 from .handlers_wild import WildHandlersMixin
+from .handlers_guild_battle import GuildBattleHandlersMixin
 
 log = logging.getLogger("atg.handlers")
 
@@ -25,7 +26,8 @@ VERIFY_OK = 0
 VERIFY_NEW_ACCOUNT = 2
 
 
-class Handlers(PvpHandlersMixin, WildHandlersMixin):
+class Handlers(PvpHandlersMixin, WildHandlersMixin,
+               GuildBattleHandlersMixin):
     """Registry of tag -> async handler(session, msg)."""
 
     def __init__(self, server) -> None:
@@ -156,6 +158,16 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin):
             P.REQUEST_SURVIVE_TOP: self.h_request_survive_top,
             P.ENTER_SURVIVE_BATTLE: self.h_enter_survive_battle,
             P.SURVIVE_BATTLE_FINISH: self.h_survive_battle_finish,
+            # guild battle (weekly war)
+            P.REQ_GUILD_BATTLE_INFO: self.h_req_guild_battle_info,
+            P.REQ_GUILD_BATTLE_STATE: self.h_req_guild_battle_state,
+            P.SET_GUILD_BATTLE_MEMBER: self.h_set_guild_battle_member,
+            P.REQ_GUILD_BATTLE_MEMBER: self.h_req_guild_battle_member,
+            P.GUILD_BATTLE_GUESS: self.h_guild_battle_guess,
+            P.REQ_GUILD_BATTLE_GUESS: self.h_req_guild_battle_guess,
+            P.REQ_GUILD_BATTLE_RANK: self.h_req_guild_battle_rank,
+            P.REQ_GUILD_SCORE_INFO: self.h_req_guild_score_info,
+            P.ENTER_GUILD_BATTLE: self.h_enter_guild_battle,
         }
 
     # ------------------------------------------------------------------
@@ -166,7 +178,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin):
             server_id=config.SERVER_ID,
             name=config.SERVER_NAME,
             ip=self.server.advertise_ip,
-            port=config.GAME_PORT,
+            port=config.ADVERTISE_PORT,
             state=0,
             player_state=0,
             area=0,
@@ -205,7 +217,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin):
             server_id=config.SERVER_ID,
             name=config.SERVER_NAME,
             ip=self.server.advertise_ip,
-            port=config.GAME_PORT,
+            port=config.ADVERTISE_PORT,
         )]
         # response {state(0), session(1), game_server(2), user_server(3),
         #           facebook_bind(4), versionCode(5), dataVersionCode(6),
@@ -259,21 +271,43 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin):
 
     async def h_character_create(self, s: Session, msg) -> None:
         # character_create.request {character: general{...}(0)}
-        # The client sends a `general` object; we extract name/sex if present,
-        # otherwise generate a random name.
+        # The client sends a `general` object; we extract name/sex and the
+        # profession (field 2: 0 Batfighter, 1 Boxer, 2 Gunner — the three
+        # playable classes; PROFESSIONS maps them to weapon class + skills).
         name = None
         sex = 0
+        profession = 0
         raw = msg.body.get(0)
         if isinstance(raw, (bytes, bytearray)):
             g = sproto.decode_fields(bytes(raw))
             name = g.get(0) if isinstance(g.get(0), str) else None
-            sex = g.get(2, 0) if isinstance(g.get(2), int) else 0
+            # `general` has no surviving class in the decompiled dump. Accept
+            # the profession on field 1 (preferred) with field 2 as fallback;
+            # sex falls back to field 2 when 1 carries the profession.
+            prof1 = g.get(1)
+            prof2 = g.get(2)
+            if isinstance(prof1, int) and prof1 in economy.PROFESSIONS:
+                profession = prof1
+                if isinstance(prof2, int):
+                    sex = prof2
+            elif isinstance(prof2, int) and prof2 in economy.PROFESSIONS:
+                profession = prof2
         if not name:
             name = "Gangster%d" % (self.server.next_session() % 100000)
-        row = self.server.db.create_character(s.account_id or 0, name, sex=sex)
+        row = self.server.db.create_character(s.account_id or 0, name, sex=sex,
+                                              profession=profession)
         if row is None:
             s.respond(msg, {1: 1})  # errno: name taken
             return
+        # grant the profession's starting weapon (tier 1 of its class) and
+        # its real skill group (economy.PROFESSIONS[prof].skills)
+        prof_def = economy.PROFESSIONS[profession]
+        start_weapon = (profession + 1) * 10000 + 1
+        if start_weapon in economy.ITEMS:
+            self.server.db.add_item(row["id"], start_weapon, 1)
+            self.server.db.set_equipped(row["id"], 0, start_weapon)
+        for skill_id in prof_def["skills"]:
+            self.server.db.learn_skill(row["id"], skill_id)
         overview = sproto.encode_object({
             0: row["id"], 1: row["name"], 2: row["level"], 3: row["sex"],
         })
@@ -663,6 +697,13 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin):
         if db.get_item_count(char_id, item_id) < 1:
             s.respond(msg, {0: 3})
             return
+        # weapon class must match the character's profession (real EquipData
+        # Job rule: Batfighter/Boxer/Gunner items are class-locked)
+        if idef.get("slot") == 0 and "weapon_class" in idef:
+            prof = db.get_character(char_id)["profession"]
+            if idef["weapon_class"] != prof:
+                s.respond(msg, {0: 4})   # wrong profession
+                return
         db.set_equipped(char_id, idef["slot"], item_id)
         s.respond(msg, {0: 0})
         self._sync_backpack(s, char_id)

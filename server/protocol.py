@@ -241,6 +241,28 @@ RET_REQUEST_SURVIVE_TOP = 636
 ENTER_SURVIVE_BATTLE = 246
 SURVIVE_BATTLE_FINISH = 637
 
+# --- guild battle (weekly guild-vs-guild war; GuildBattleData row 1501) ------
+REQ_GUILD_BATTLE_INFO = 285
+RET_GUILD_BATTLE_INFO = 662
+ENTER_GUILD_BATTLE = 286
+RET_ENTER_GUILD_BATTLE = 677
+REQ_GUILD_BATTLE_RANK = 287
+RET_GUILD_BATTLE_RANK = 663
+REQ_GUILD_BATTLE_MEMBER = 288
+RET_GUILD_BATTLE_MEMBER = 665
+SET_GUILD_BATTLE_MEMBER = 289
+RET_SET_GUILD_BATTLE_MEMBER = 666
+GUILD_BATTLE_GUESS = 290
+RET_GUILD_BATTLE_GUESS = 669
+REQ_GUILD_BATTLE_GUESS = 292
+REQ_GUILD_SCORE_INFO = 291
+RET_GUILD_SCORE_INFO = 667
+GUILD_BATTLE_FINISH_INFO = 668
+GUILD_BATTLE_START = 670
+REQ_GUILD_BATTLE_STATE = 295
+RET_GUILD_BATTLE_STATE = 673
+NOTICE_GUILD_BATTLE_RANK = 676
+
 # --- misc client progress -----------------------------------------------------
 TUTORIAL_FINISH = 306
 UNLOCK_FUNCTION_COMPLETE = 268
@@ -390,6 +412,25 @@ TAG_NAMES = {
     NEXT_WAVE: "next_wave",
     COPY_SCENE_RESULT: "copy_scene_result",
     SYNC_COPYSCENES_INFO: "sync_copyscenes_info",
+    REQ_GUILD_BATTLE_INFO: "req_guild_battle_info",
+    RET_GUILD_BATTLE_INFO: "ret_guild_battle_info",
+    ENTER_GUILD_BATTLE: "enter_guild_battle",
+    RET_ENTER_GUILD_BATTLE: "ret_enter_guild_battle",
+    REQ_GUILD_BATTLE_RANK: "req_guild_battle_rank",
+    RET_GUILD_BATTLE_RANK: "ret_guild_battle_rank",
+    REQ_GUILD_BATTLE_MEMBER: "req_guild_battle_member",
+    RET_GUILD_BATTLE_MEMBER: "ret_guild_battle_member",
+    SET_GUILD_BATTLE_MEMBER: "set_guild_battle_member",
+    RET_SET_GUILD_BATTLE_MEMBER: "ret_set_guild_battle_member",
+    GUILD_BATTLE_GUESS: "guild_battle_guess",
+    RET_GUILD_BATTLE_GUESS: "ret_guild_battle_guess",
+    REQ_GUILD_SCORE_INFO: "req_guild_score_info",
+    RET_GUILD_SCORE_INFO: "ret_guild_score_info",
+    GUILD_BATTLE_START: "guild_battle_start",
+    GUILD_BATTLE_FINISH_INFO: "guild_battle_finish_info",
+    REQ_GUILD_BATTLE_STATE: "req_guild_battle_state",
+    RET_GUILD_BATTLE_STATE: "ret_guild_battle_state",
+    NOTICE_GUILD_BATTLE_RANK: "notice_guild_battle_rank",
     UPDATE_COPYSCENE_INFO: "update_copyscene_info",
     NOTICE_COPY_SCENE_INFO: "notice_copy_scene_info",
     NOTIFY_COPY_START_INFO: "notify_copy_start_info",
@@ -519,6 +560,7 @@ def parse_frame(payload: bytes, response: bool = False) -> "IncomingMessage":
 REQUEST_SPECS = {
     VISITOR: {},
     VERFIY: {0: "s", 1: "s", 2: "s"},
+    SET_GUILD_BATTLE_MEMBER: {0: "sa"},
     LOGIN: {0: "i", 1: "s", 2: "i", 3: "s", 4: "s", 5: "i", 6: "i"},
     CHARACTER_CREATE: {0: "o"},
     CHARACTER_PICK: {0: "i"},
@@ -714,6 +756,15 @@ RESPONSE_SPECS = {
     RET_REQUEST_WILD_BOSS_INFO: {0: "s", 1: "i", 2: "i", 3: "i", 4: "i"},
     RET_REQUEST_SURVIVE_TOP: {0: "oa"},
     SURVIVE_BATTLE_FINISH: {0: "i", 1: "i", 2: "i"},
+    RET_GUILD_BATTLE_INFO: {0: "i", 1: "i", 2: "i", 3: "i", 4: "oa"},
+    RET_ENTER_GUILD_BATTLE: {0: "i"},
+    RET_GUILD_BATTLE_RANK: {0: "oa"},
+    RET_GUILD_BATTLE_MEMBER: {0: "oa"},
+    RET_SET_GUILD_BATTLE_MEMBER: {0: "i"},
+    RET_GUILD_BATTLE_GUESS: {0: "s", 1: "i"},
+    RET_GUILD_SCORE_INFO: {0: "i", 1: "i"},
+    GUILD_BATTLE_START: {0: "i"},
+    RET_GUILD_BATTLE_STATE: {0: "i"},
 }
 
 
@@ -761,6 +812,15 @@ RESPONSE_ALIASES = {
     LEAVE_COPY_SCENE: LEAVE_COPY_SCENE,
     CHANGE_SCENE_LINE: CHANGE_SCENE_LINE,
     ENTER_TELEPORT_POINT: ENTER_TELEPORT_POINT,
+    REQ_GUILD_BATTLE_INFO: RET_GUILD_BATTLE_INFO,
+    REQ_GUILD_BATTLE_MEMBER: RET_GUILD_BATTLE_MEMBER,
+    SET_GUILD_BATTLE_MEMBER: RET_SET_GUILD_BATTLE_MEMBER,
+    GUILD_BATTLE_GUESS: RET_GUILD_BATTLE_GUESS,
+    REQ_GUILD_BATTLE_GUESS: RET_GUILD_BATTLE_GUESS,
+    REQ_GUILD_BATTLE_RANK: RET_GUILD_BATTLE_RANK,
+    REQ_GUILD_SCORE_INFO: RET_GUILD_SCORE_INFO,
+    REQ_GUILD_BATTLE_STATE: RET_GUILD_BATTLE_STATE,
+    ENTER_GUILD_BATTLE: RET_ENTER_GUILD_BATTLE,
 }
 
 

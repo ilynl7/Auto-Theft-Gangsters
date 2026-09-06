@@ -11,10 +11,16 @@ third-party dependencies. Reverse-engineered from the client's
 python3 -m server.main
 ```
 
-The server listens on the same endpoints the original client expects:
+By default the server now runs in **single-port mode** on `0.0.0.0:13103`:
+one listener serves both the login-gate protocol and the game protocol. The
+client connects its login gate to the patched host/port and then hops to
+whatever `game_server.serverPort` the gate advertises — the gate advertises
+the same single port, so only one port needs to be open. The original
+two-port layout is still available with `ATG_SINGLE_PORT=0`:
 
 | Endpoint   | Port | Purpose                                   |
 |------------|------|-------------------------------------------|
+| Single port| 13103| gate + game on one listener (default)     |
 | Login gate | 9777 | `update_game_server`, `visitor`, `verfiy` |
 | Game server| 9555 | `login`, characters, world/AOI, chat      |
 
@@ -40,8 +46,11 @@ redirecting. The advertised game-server IP can be set with
 
 | Variable          | Default        | Meaning                          |
 |-------------------|----------------|----------------------------------|
-| `ATG_GATE_PORT`   | `9777`         | Login gate port                  |
-| `ATG_GAME_PORT`   | `9555`         | Game server port                 |
+| `ATG_SINGLE_PORT` | `1`            | `1` = one listener, `0` = gate+game |
+| `ATG_PORT`        | `13103`        | Single-mode listener port        |
+| `ATG_GATE_PORT`   | `9777`         | Login gate port (two-port mode)  |
+| `ATG_GAME_PORT`   | `9555`         | Game server port (two-port mode) |
+| `ATG_ADVERTISE_PORT`| listen port  | Port advertised in the server list |
 | `ATG_BIND_HOST`   | `0.0.0.0`      | Listen address                   |
 | `ATG_DB_PATH`     | `atg_server.db`| SQLite database file             |
 | `ATG_SERVER_NAME` | `Revival-1`    | Server name shown in server list |
@@ -232,6 +241,34 @@ python3 -m pytest tests/ -q
   (info → enter → boss npc sync → countdown) and survive mode (leaderboard
   → enter → escalating waves → finish → scaled rewards → best/leaderboard
   update).
+- `tests/test_guild_battle.py` — end-to-end coverage of the weekly guild
+  battle (signup → fighter list → info → betting → ranks/scores → entry
+  gating), the three professions (starting weapon + real skill group,
+  weapon-class locking), and the real car shop (CarData vehicles).
+
+## Real content (Data.bundle recovery)
+
+`server/game_data.py` holds content extracted from the APK's
+`Bundle/Data/Data.bundle` (LZMA-compressed Unity asset, decompressed and
+table-parsed):
+
+- **Professions** — exactly three playable classes (string table 100128–130):
+  Batfighter (械斗), Boxer (拳击), Gunner (枪手). The profession sent in
+  `character_create.general` picks the weapon class and the starting skills.
+- **Weapons** — `EquipData` Position=0 rows: 8 tiers per class with the real
+  attack values (180/300/486/732/1044/1416/1848/2340) and the real skill
+  groups (101–104 / 201–204 / 301–304 = three attacks + a dodge).
+- **Cars** — `CarData`: North Star, Thunder, Conqueror, Bison, Night Walker,
+  Golden King, Christmas Sleigh + the North Star GT variant, with the real
+  hp/atk/speed/accel stats. The shop sells the original car vouchers
+  (ItemData 9301–9307).
+- **Items** — real consumables (定值-血药 potions, 复活药 revive, 药剂
+  stamina potions), tickets (经验/金币/装备/赛车), rename card, world-chat
+  mic, with ItemData prices.
+- **Guild battle** — `GuildBattleData` row 1501: 10 fighters per guild,
+  1800 s battles, gold-bar betting (item 1002, stake 200 → 500), weekly
+  rounds on weekdays 5 (19:30) / 6 (20:30) / 7 (20:30), top-3 reward drops
+  37001–37003.
 
 ## What works with a real client
 
@@ -247,9 +284,9 @@ Character persistence (position, level, exp, hp, name, car), currency
 membership, friends, mail, ladder score/history and tower/slot progress are
 stored in SQLite and restored on re-entry.
 
-The remaining tags (dances, wild boss, survive, bar fight, escort, teams,
-VIP, videos/ads, retrieve-account and similar) are not yet implemented;
-unknown tags are logged, not crashed on.
+The remaining tags (dances, bar fight, escort, teams, VIP, videos/ads,
+retrieve-account and similar) are not yet implemented; unknown tags are
+logged, not crashed on.
 
 ## Wire protocol summary (recovered from Assembly-CSharp.dll)
 

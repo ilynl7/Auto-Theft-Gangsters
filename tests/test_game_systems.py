@@ -314,14 +314,15 @@ async def test_buy_car_and_use_mount(server):
 
     resp = await c.rpc(P.BUY_CAR_SHOP, {0: 901})
     assert resp.body[0] == 0
-    assert srv.db.get_character(char_id)["car_id"] == 1
+    # goods 901 is the real North Star voucher exchanging into CarData 1001
+    assert srv.db.get_character(char_id)["car_id"] == 1001
 
     resp = await c.rpc(P.REQUEST_MOUNT_INFO, {})
     mounts = [sproto.decode_typed(e, {0: "i", 1: "i", 2: "i"})
               for e in decode_object_array(resp.body[0])]
-    assert any(m[0] == 1 for m in mounts)
+    assert any(m[0] == 1001 for m in mounts)
 
-    resp = await c.rpc(P.USE_MOUNT, {0: 1})
+    resp = await c.rpc(P.USE_MOUNT, {0: 1001})
     assert resp.body[0] == 0
-    assert srv.db.get_character(char_id)["using_car"] == 1
+    assert srv.db.get_character(char_id)["using_car"] == 1001
     await c.close()

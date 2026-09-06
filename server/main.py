@@ -22,7 +22,11 @@ class GameServer:
         self.db = Database(config.DB_PATH)
         self.world = World()
         self.handlers = Handlers(self)
-        self.advertise_ip = advertise_ip or "127.0.0.1"
+        env_ip = config.ADVERTISE_IP or advertise_ip
+        # default: whatever IP the client used to reach the login gate. The
+        # client resolves the game hop itself when the gate advertises the
+        # same host it is already talking to.
+        self.advertise_ip = env_ip or ""
         self._session_counter = 0
 
     def next_session(self) -> int:
@@ -63,6 +67,15 @@ class GameServer:
         log.info("connection closed %s", peer)
 
     async def start(self) -> None:
+        if config.SINGLE_PORT:
+            listener = await asyncio.start_server(
+                self._handle_conn, config.BIND_HOST, config.SINGLE_PORT_NUM)
+            log.info("single-port mode: listening on %s:%d "
+                     "(gate + game on one port)",
+                     config.BIND_HOST, config.SINGLE_PORT_NUM)
+            async with listener:
+                await listener.serve_forever()
+            return
         gate = await asyncio.start_server(
             self._handle_conn, config.BIND_HOST, config.GATE_PORT)
         game = await asyncio.start_server(

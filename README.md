@@ -13,8 +13,13 @@ lives in [`server/`](server/) with docs in
 [`research/server/README.md`](research/server/README.md).
 
 ```bash
-python3 -m server.main   # gate :9777 + game server :9555
+python3 -m server.main   # single port :13103 (gate + game on one listener)
+# legacy two-port mode: ATG_SINGLE_PORT=0  -> gate :9777 + game :9555
 ```
+
+The client connects its login gate to the patched address/port and then hops
+to whatever `game_server.serverPort` the gate advertises — the gate advertises
+the same single port, so one open port is enough.
 
 Ongoing focus:
 
@@ -32,8 +37,20 @@ score/history/win-count rewards), the endless tower climb (floors, rewards,
 reset, wipe-out), the slot machine (spins + accumulating sum-reward pool),
 map/line switching + teleport points, client progress tags (tutorial,
 function unlocks, renames), the open-world wild boss raid (shared boss HP
-pool, boss info + entry sync), and the survive mode (escalating npc waves,
-wave-scaled rewards, best-wave leaderboard).
+pool, boss info + entry sync), the survive mode (escalating npc waves,
+wave-scaled rewards, best-wave leaderboard), and the weekly guild battle
+(guild-vs-guild war, tags 285–295 / 662–677 with the real schedule from the
+client's GuildBattleData: weekday 5/6/7 rounds, 1800 s per battle, 10
+fighters per guild, gold-bar betting, weekly score ranking).
+
+Content now uses the real values recovered from the APK's Data.bundle
+(`server/game_data.py`): the three playable professions (Batfighter,
+Boxer, Gunner — the `character_create` profession selects the weapon
+class), 24+ weapons across 8 tiers per class with the real attack values,
+7 real vehicles (North Star, Thunder, Conqueror, Bison, Night Walker,
+Golden King, Christmas Sleigh) with the real CarData stats, real
+consumables/potions/tickets with ItemData prices, and the real per-class
+skill groups (Bat Combo / Straight Punch / Snap Shot + dodge).
 
 ---
 

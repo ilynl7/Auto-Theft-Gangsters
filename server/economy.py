@@ -1,13 +1,22 @@
 """Content tables + world simulation config: NPCs, combat, skills, cars.
 
-Provisional revival-server data (see research/server/README.md). Extend these
-tables to add content — the handlers and world simulation are data-driven.
+Item/weapon/car/skill content is merged from `game_data.py`, which holds the
+real values recovered from the APK's Data.bundle. A small set of legacy
+placeholder goods is kept for the shop flow tests. See research/server/README.md.
 """
+
+from . import game_data as GD
+from .game_data import CARS as REAL_CARS
+from .game_data import ITEMS as REAL_ITEMS
+from .game_data import PROFESSIONS
+from .game_data import SKILLS as REAL_SKILLS
+from .game_data import WEAPONS as REAL_WEAPONS
 
 # --- items -----------------------------------------------------------------
 # item_id -> {"name", "type", "slot", "price"(gold), "power"}
 # type: "consumable" | "equipment" | "badge" | "fashion" | "package"
 # slot: 0 weapon, 1 armor, 2 badge, 3 fashion (equipment/badge/fashion only)
+# Real items from the APK ItemData table + the legacy placeholders below.
 ITEMS = {
     1:  {"name": "Health Potion", "type": "consumable", "price": 250,
          "heal": 50},
@@ -33,6 +42,24 @@ ITEMS = {
     40: {"name": "Starter Crate", "type": "package", "price": 1500,
          "contents": {1: 3, 2: 5}},
 }
+ITEMS.update(REAL_ITEMS)
+# weapons are equipment with slot 0 and `atk` as power
+for _wid, _w in REAL_WEAPONS.items():
+    ITEMS[_wid] = {
+        "name": _w["name"], "type": "equipment", "slot": 0,
+        "price": 0, "power": _w["atk"], "weapon_class": _w["class"],
+        "tier": _w["tier"], "skills": _w["skills"],
+    }
+
+# --- cars --------------------------------------------------------------------
+# legacy placeholder cars (shop goods 901-903 reference ids 1-3)
+LEGACY_CARS = {
+    1: {"name": "Sedan", "speed": 14},
+    2: {"name": "Muscle Car", "speed": 18},
+    3: {"name": "Sports Coupe", "speed": 24},
+}
+CARS = dict(LEGACY_CARS)
+CARS.update(REAL_CARS)
 
 # shops: shop_id -> goods list (as before, plus car shop id 9)
 SHOPS = {
@@ -80,13 +107,23 @@ SHOPS = {
     9: {
         "name": "Car Shop",
         "car_shop": True,
+        # the real car shop sold the car exchange vouchers (ItemData 9301-9307)
+        # which the client exchanges into the actual vehicles (CarData 1001-1007)
         "goods": [
-            {"goods_id": 901, "car_id": 1, "name": "Sedan",
-             "currency": 1, "price": 20000},
-            {"goods_id": 902, "car_id": 2, "name": "Muscle Car",
-             "currency": 1, "price": 50000},
-            {"goods_id": 903, "car_id": 3, "name": "Sports Coupe",
-             "currency": 2, "price": 100},
+            {"goods_id": 901, "item_id": 9301, "count": 1, "car_id": 1001,
+             "name": "North Star", "currency": 1, "price": 1888},
+            {"goods_id": 902, "item_id": 9303, "count": 1, "car_id": 1002,
+             "name": "Thunder", "currency": 1, "price": 5888},
+            {"goods_id": 903, "item_id": 9304, "count": 1, "car_id": 1003,
+             "name": "Conqueror", "currency": 1, "price": 8888},
+            {"goods_id": 904, "item_id": 9302, "count": 1, "car_id": 1004,
+             "name": "Bison", "currency": 1, "price": 18888},
+            {"goods_id": 905, "item_id": 9305, "count": 1, "car_id": 1005,
+             "name": "Night Walker", "currency": 1, "price": 28888},
+            {"goods_id": 906, "item_id": 9306, "count": 1, "car_id": 1006,
+             "name": "Golden King", "currency": 2, "price": 100},
+            {"goods_id": 907, "item_id": 9307, "count": 1, "car_id": 1007,
+             "name": "Christmas Sleigh", "currency": 2, "price": 50},
         ],
     },
 }
@@ -133,11 +170,14 @@ MISSIONS = {
 DAILY_MISSION_IDS = [2001]
 
 # --- combat / npcs ------------------------------------------------------------
+# skills: real per-class skill groups from SkillData merged over the legacy
+# generic set
 SKILLS = {
-    1: {"name": "Straight Punch", "damage": 10},
-    2: {"name": "Quick Shot", "damage": 18},
+    1: {"name": "Basic Attack", "damage": 5},
+    2: {"name": "Heavy Strike", "damage": 15},
     3: {"name": "Power Blow", "damage": 30},
 }
+SKILLS.update(REAL_SKILLS)
 
 SKILL_LEVELUP_COST = 1000       # gold per skill level
 
@@ -163,12 +203,14 @@ PLAYER_BASE_ATTACK = 12
 PLAYER_BASE_HP = 100
 RESPAWN_HP_FRACTION = 1.0
 
-# cars (car shop): car_id -> {"name", "speed"}
-CARS = {
-    1: {"name": "Sedan", "speed": 14},
-    2: {"name": "Muscle Car", "speed": 18},
-    3: {"name": "Sports Coupe", "speed": 24},
+# skills: real per-class skill groups from SkillData merged over the legacy
+# generic set
+SKILLS = {
+    1: {"name": "Basic Attack", "damage": 5},
+    2: {"name": "Heavy Strike", "damage": 15},
+    3: {"name": "Power Blow", "damage": 30},
 }
+SKILLS.update(REAL_SKILLS)
 
 # --- copy scenes / dungeons -------------------------------------------------
 # Wave-based PvE instances entered from the open world (client flow:

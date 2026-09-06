@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS characters (
     name        TEXT NOT NULL,
     level       INTEGER NOT NULL DEFAULT 1,
     sex         INTEGER NOT NULL DEFAULT 0,
+    profession  INTEGER NOT NULL DEFAULT 0,   -- 0 Batfighter, 1 Boxer, 2 Gunner
     exp         INTEGER NOT NULL DEFAULT 0,
     hp          INTEGER NOT NULL DEFAULT 100,
     max_hp      INTEGER NOT NULL DEFAULT 100,
@@ -152,6 +153,30 @@ CREATE TABLE IF NOT EXISTS pvp_history (
     blob        BLOB NOT NULL,
     created_at  INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS guild_battle (
+    guild_id    INTEGER NOT NULL REFERENCES guilds(id),
+    week        INTEGER NOT NULL,
+    score       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, week)
+);
+
+CREATE TABLE IF NOT EXISTS guild_battle_members (
+    guild_id    INTEGER NOT NULL REFERENCES guilds(id),
+    week        INTEGER NOT NULL,
+    name        TEXT NOT NULL,
+    job         INTEGER NOT NULL DEFAULT 2,
+    PRIMARY KEY (guild_id, week, name)
+);
+
+CREATE TABLE IF NOT EXISTS guild_battle_guess (
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    week        INTEGER NOT NULL,
+    guild       TEXT NOT NULL,
+    amount      INTEGER NOT NULL,
+    settled     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (char_id, week)
+);
 """
 
 
@@ -170,6 +195,10 @@ class Database:
         if "diamond" not in cols:
             self._conn.execute(
                 "ALTER TABLE characters ADD COLUMN diamond INTEGER NOT NULL DEFAULT 20")
+        if "profession" not in cols:
+            self._conn.execute(
+                "ALTER TABLE characters ADD COLUMN profession INTEGER"
+                " NOT NULL DEFAULT 0")
         self._conn.commit()
 
     # -- accounts -----------------------------------------------------
@@ -212,14 +241,17 @@ class Database:
         ).fetchone()
 
     def create_character(self, account_id: int, name: str, sex: int = 0,
-                         level: int = 1, extra: dict = None):
+                         level: int = 1, profession: int = 0,
+                         extra: dict = None):
         extra = extra or {}
         now = int(time.time())
         try:
             cur = self._conn.execute(
-                "INSERT INTO characters (account_id, name, level, sex, data, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (account_id, name, level, sex, json.dumps(extra), now),
+                "INSERT INTO characters (account_id, name, level, sex,"
+                " profession, data, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (account_id, name, level, sex, profession,
+                 json.dumps(extra), now),
             )
             self._conn.commit()
         except sqlite3.IntegrityError:
@@ -677,6 +709,76 @@ class Database:
                 out.append({"name": row["name"], "score": r["value"]})
         return out
 
+    # -- guild battle (weekly guild-vs-guild war) ----------------------------
+    def set_guild_battle_members(self, guild_id: int, week: int,
+                                 names: list) -> None:
+        self._conn.execute(
+            "DELETE FROM guild_battle_members WHERE guild_id = ? AND week = ?",
+            (guild_id, week))
+        for i, name in enumerate(names):
+            self._conn.execute(
+                "INSERT OR IGNORE INTO guild_battle_members"
+                " (guild_id, week, name, job) VALUES (?, ?, ?, ?)",
+                (guild_id, week, name, 0 if i == 0 else 2))
+        self._conn.commit()
+
+    def list_guild_battle_members(self, guild_id: int, week: int):
+        return self._conn.execute(
+            "SELECT name, job FROM guild_battle_members"
+            " WHERE guild_id = ? AND week = ? ORDER BY job, rowid",
+            (guild_id, week)).fetchall()
+
+    def add_guild_battle_score(self, guild_id: int, week: int,
+                               amount: int) -> int:
+        self._conn.execute(
+            "INSERT INTO guild_battle (guild_id, week, score) VALUES (?, ?, ?)"
+            " ON CONFLICT(guild_id, week)"
+            " DO UPDATE SET score = score + ?",
+            (guild_id, week, amount, amount))
+        self._conn.commit()
+        return self.get_guild_battle_score(guild_id, week)
+
+    def get_guild_battle_score(self, guild_id: int, week: int) -> int:
+        row = self._conn.execute(
+            "SELECT score FROM guild_battle WHERE guild_id = ? AND week = ?",
+            (guild_id, week)).fetchone()
+        return row["score"] if row else 0
+
+    def top_guild_battle_scores(self, week: int, limit: int = 10):
+        rows = self._conn.execute(
+            "SELECT guild_id, score FROM guild_battle WHERE week = ?"
+            " ORDER BY score DESC LIMIT ?", (week, limit)).fetchall()
+        out = []
+        for r in rows:
+            g = self._conn.execute(
+                "SELECT name FROM guilds WHERE id = ?", (r["guild_id"],)
+            ).fetchone()
+            if g is not None:
+                out.append({"guild_id": r["guild_id"], "name": g["name"],
+                            "score": r["score"]})
+        return out
+
+    def set_guild_battle_guess(self, char_id: int, week: int,
+                               guild: str, amount: int) -> None:
+        self._conn.execute(
+            "INSERT INTO guild_battle_guess (char_id, week, guild, amount)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(char_id, week)"
+            " DO UPDATE SET guild = ?, amount = ?, settled = 0",
+            (char_id, week, guild, amount, guild, amount))
+        self._conn.commit()
+
+    def get_guild_battle_guess(self, char_id: int, week: int):
+        return self._conn.execute(
+            "SELECT guild, amount, settled FROM guild_battle_guess"
+            " WHERE char_id = ? AND week = ?", (char_id, week)).fetchone()
+
+    def get_flag(self, char_id: int, key: str) -> int:
+        return self.get_progress(char_id, key)
+
+    def set_flag(self, char_id: int, key: str, value: int) -> None:
+        self.set_progress(char_id, key, value)
+
     def top_survive_scores(self, limit: int = 10):
         """Best survive waves joined with character names."""
         progress = self._conn.execute(
@@ -706,7 +808,7 @@ class Database:
     def set_using_car(self, char_id: int, car_id) -> None:
         self._conn.execute(
             "UPDATE characters SET car_id = ?, using_car = ? WHERE id = ?",
-            (car_id, 1 if car_id is not None else 0, char_id))
+            (car_id, car_id if car_id is not None else 0, char_id))
         self._conn.commit()
 
     def close(self) -> None:

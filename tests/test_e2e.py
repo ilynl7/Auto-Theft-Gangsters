@@ -134,6 +134,7 @@ async def server():
     # handlers advertise config ports; sync them to the bound ephemeral ports
     config.GATE_PORT = gate_port
     config.GAME_PORT = game_port
+    config.ADVERTISE_PORT = game_port
 
     yield srv, gate_port, game_port
 
