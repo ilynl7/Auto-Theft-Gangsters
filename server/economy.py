@@ -225,3 +225,22 @@ SLOT = {
     "triple_multiplier": 10,
     "pair_multiplier": 2,
 }
+
+# --- wild boss (open-world raid boss) ----------------------------------------
+# client flow: request_wild_boss_info(200) -> enter_wild_boss(201) ->
+# fight via the standard combat tags -> shared HP pool per map; respawns
+# on demand at full strength once killed
+WILD_BOSS = {
+    "kind": 3,                      # Mob Boss stats
+    "spawn": {"x": 1200, "y": 0, "z": 1200, "o": 0},
+    "countdown": 120,
+}
+
+# --- survive (survival assault) ----------------------------------------------
+# client flow: request_survive_top(245) -> enter_survive_batttle(246) ->
+# endless escalating npc waves (kills reported via single_copy_scene_npc_die)
+# -> survive_battle_finish(637) pays scaled rewards and records the best wave
+SURVIVE = {
+    "countdown": 90,
+    "reward": {"gold": 300, "exp": 100},   # multiplied by the wave reached
+}

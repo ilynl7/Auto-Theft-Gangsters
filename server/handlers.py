@@ -16,6 +16,7 @@ from . import sproto
 from . import world as W
 from .session import Session
 from .handlers_pvp import PvpHandlersMixin
+from .handlers_wild import WildHandlersMixin
 
 log = logging.getLogger("atg.handlers")
 
@@ -24,7 +25,7 @@ VERIFY_OK = 0
 VERIFY_NEW_ACCOUNT = 2
 
 
-class Handlers(PvpHandlersMixin):
+class Handlers(PvpHandlersMixin, WildHandlersMixin):
     """Registry of tag -> async handler(session, msg)."""
 
     def __init__(self, server) -> None:
@@ -149,6 +150,12 @@ class Handlers(PvpHandlersMixin):
             P.RE_NAME: self.h_re_name,
             P.CHANGE_SHOW_TYPE: self.h_change_show_type,
             P.IMPACT_NPC: self.h_impact_npc,
+            # wild boss / survive
+            P.REQUEST_WILD_BOSS_INFO: self.h_request_wild_boss_info,
+            P.ENTER_WILD_BOSS: self.h_enter_wild_boss,
+            P.REQUEST_SURVIVE_TOP: self.h_request_survive_top,
+            P.ENTER_SURVIVE_BATTLE: self.h_enter_survive_battle,
+            P.SURVIVE_BATTLE_FINISH: self.h_survive_battle_finish,
         }
 
     # ------------------------------------------------------------------

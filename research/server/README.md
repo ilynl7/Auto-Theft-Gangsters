@@ -134,6 +134,16 @@ Tags handled (see `server/protocol.py`):
   (155), `request_line_state` (219, answered with `update_line_state` 568
   player counts per line), `enter_teleport_point` (251),
   `update_player_map_info` (324).
+- **Wild boss (raid boss)**: `request_wild_boss_info` (200/605, boss name,
+  level, hp/max, alive flag), `enter_wild_boss` (201 → npc_create +
+  count_down). The boss is a shared per-map NPC (kind 3 stats) fought with
+  the standard combat tags; it respawns on demand at full strength.
+  Config in `economy.WILD_BOSS`.
+- **Survive mode**: `request_survive_top` (245/636, best-wave leaderboard),
+  `enter_survive_batttle` (246 → escalating npc waves + countdown; kills
+  reported via `single_copy_scene_npc_die`), `survive_battle_finish`
+  (637 → wave-scaled gold/exp reward, best wave recorded, reward tips
+  pushed). Config in `economy.SURVIVE`.
 - **Client progress**: `tutorial_finish` (306), `unlock_function_complete`
   (268), `re_name` (301), `change_show_type` (223), `impact_npc` (298),
   `start_download` (269) / `download_finish` (270) no-ops.
@@ -218,6 +228,10 @@ python3 -m pytest tests/ -q
   (info → spins → pool claim), map/line helpers (line state, line change,
   map switch, teleport), and the misc progress tags (tutorial, unlock,
   rename, show type, download no-ops).
+- `tests/test_wild_survive.py` — end-to-end coverage of the wild boss
+  (info → enter → boss npc sync → countdown) and survive mode (leaderboard
+  → enter → escalating waves → finish → scaled rewards → best/leaderboard
+  update).
 
 ## What works with a real client
 

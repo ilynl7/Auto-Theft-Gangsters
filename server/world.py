@@ -69,6 +69,8 @@ class World:
         self.maps: dict = {}
         # map_id -> {npc_id: WorldNpc}
         self.npcs: dict = {}
+        # map_id -> the live wild boss (raid boss) WorldNpc, if spawned
+        self.bosses: dict = {}
         self._spawn_npcs()
 
     def _spawn_npcs(self) -> None:

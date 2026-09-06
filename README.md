@@ -30,8 +30,10 @@ friends, mail, sign-in rewards, car/mount ownership, copy scenes (wave-based
 dungeons with countdown + rewards), the rank PvP ladder (天梯 matchmaking,
 score/history/win-count rewards), the endless tower climb (floors, rewards,
 reset, wipe-out), the slot machine (spins + accumulating sum-reward pool),
-map/line switching + teleport points, and client progress tags (tutorial,
-function unlocks, renames).
+map/line switching + teleport points, client progress tags (tutorial,
+function unlocks, renames), the open-world wild boss raid (shared boss HP
+pool, boss info + entry sync), and the survive mode (escalating npc waves,
+wave-scaled rewards, best-wave leaderboard).
 
 ---
 

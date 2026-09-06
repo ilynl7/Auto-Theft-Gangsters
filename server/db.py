@@ -677,6 +677,20 @@ class Database:
                 out.append({"name": row["name"], "score": r["value"]})
         return out
 
+    def top_survive_scores(self, limit: int = 10):
+        """Best survive waves joined with character names."""
+        progress = self._conn.execute(
+            "SELECT char_id, value FROM progress WHERE key = 'survive_best'"
+            " ORDER BY value DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in progress:
+            row = self._conn.execute(
+                "SELECT name FROM characters WHERE id = ?", (r["char_id"],)
+            ).fetchone()
+            if row is not None:
+                out.append({"name": row["name"], "best": r["value"]})
+        return out
+
     # -- cars / mounts ----------------------------------------------------------
     def list_cars(self, char_id: int):
         row = self._conn.execute(
