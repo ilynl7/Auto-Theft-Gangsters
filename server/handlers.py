@@ -349,6 +349,10 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         for npc in self.server.world.npcs_in(wp.map_id):
             s.push(P.NPC_CREATE, {0: npc.blob()})
         self.server.world.join(wp)
+        # tell everyone already here about the newcomer
+        self.server.world.broadcast(wp.map_id, P.AOI_ADD,
+                                    {0: W.encode_aoi_add(wp)},
+                                    exclude=wp.char_id)
         log.info("%s entered map %s (line %s)", wp.name, wp.map_id,
                  wp.line_index)
 

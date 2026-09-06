@@ -155,19 +155,38 @@ def _encode_aoi_remove(char_id: int) -> bytes:
     return P._enc.encode_object({0: char_id})
 
 
+# The decompiled client's SprotoType.character wire tags (decode() switch in
+# SprotoType.character.cs). NOTE: the has_field bitset indices in that class
+# are NOT the wire tags — property/visual/movement serialize at tags 5/6/7.
+CHARACTER_TAG_GENERAL = 1
+CHARACTER_TAG_MOVEMENT = 7
+
+
+def encode_character_blob(char_id: int, name: str, level: int, sex: int,
+                          pos_blob: bytes) -> bytes:
+    """Minimal SprotoType.character blob the client can parse.
+
+    Tags used: 0 id, 1 general{name(0),level(1),sex(2)}, 7 movement{pos(0)}.
+    The client reads movement.pos to spawn/position the object — a wrong tag
+    makes the main player never appear and the loading widget hang forever.
+    """
+    general = P._enc.encode_object({0: name, 1: level, 2: sex})
+    return P._enc.encode_object({
+        0: char_id,
+        1: general,
+        CHARACTER_TAG_MOVEMENT: pos_blob,
+    })
+
+
 def encode_aoi_add(player: WorldPlayer) -> bytes:
     """SprotoType.aoi_add.request {character(0)} with a minimal character blob.
 
-    character tags used: 0 id, 1 general{name(0),level(1),sex(2)...},
-    5 movement{pos(0)}.  The client tolerates missing fields; it fills
-    defaults for anything absent.
+    The client tolerates missing fields; it fills defaults for anything
+    absent — but movement must be at the real wire tag (7).
     """
-    general = P._enc.encode_object({0: player.name, 1: player.level, 2: player.sex})
-    character = P._enc.encode_object({
-        0: player.char_id,
-        1: general,
-        5: player.movement_blob(),
-    })
+    character = encode_character_blob(player.char_id, player.name,
+                                      player.level, player.sex,
+                                      player.movement_blob())
     return P._enc.encode_object({0: character})
 
 
@@ -178,13 +197,14 @@ def encode_aoi_update_move(player: WorldPlayer) -> bytes:
 
 
 def encode_main_player_create(player: WorldPlayer) -> bytes:
-    """main_player_create.request {character(0), movement(1)}."""
-    general = P._enc.encode_object({0: player.name, 1: player.level, 2: player.sex})
-    character = P._enc.encode_object({
-        0: player.char_id,
-        1: general,
-        5: player.movement_blob(),
-    })
+    """main_player_create.request {character(0), movement(1)}.
+
+    character.movement must be at wire tag 7 (see encode_character_blob) or
+    the client fails to spawn the main player and hangs on the loading screen.
+    """
+    character = encode_character_blob(player.char_id, player.name,
+                                      player.level, player.sex,
+                                      player.movement_blob())
     return P._enc.encode_object({
         0: character,
         1: player.movement_blob(),

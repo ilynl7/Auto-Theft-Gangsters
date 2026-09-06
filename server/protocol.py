@@ -683,7 +683,8 @@ RESPONSE_SPECS = {
     CHARACTER_CREATE: {0: "o", 1: "i"},
     CHARACTER_PICK: {0: "i"},
     MAP_READY: {},
-    ENTER_MAP: {0: "o"},
+    # enter_map is a server PUSH: {mapInfoId(0), line_index(1), line_count(2)}
+    ENTER_MAP: {0: "s", 1: "i", 2: "i"},
     HEART_BEAT: {0: "i", 1: "i"},
     # provisional (see server/economy.py for the field layout notes)
     ACCEPT_MISSION: {0: "i"},
