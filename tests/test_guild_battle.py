@@ -178,6 +178,6 @@ async def _create_char_with_profession(game_port, name, profession):
                                   {0: "i", 1: "o", 2: "o", 3: "o",
                                    4: "i", 5: "i"})[0]
     await c.rpc(P.CHARACTER_PICK, {0: char_id})
-    await c.rpc(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})
+    await c.rpc(P.ENTER_MAP, {0: "11", 1: 0, 2: 1})
     await c.drain(0.4)
     return c

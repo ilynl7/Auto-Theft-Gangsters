@@ -76,7 +76,7 @@ def test_character_blob_movement_at_wire_tag_7():
     d = sproto.decode_typed(blob, CHARACTER_SPEC)
     assert d[0] == 42
     general = sproto.decode_typed(sproto.as_bytes(d[1]), GENERAL_SPEC)
-    assert general == {0: "TagSeven", 1: 1, 2: 0, 3: "1"}
+    assert general == {0: "TagSeven", 1: 1, 2: 0, 3: "11"}
     # attribute_other / property / visual / runtime must be present too —
     # the client hard-dereferences all of them in ObjInitPlayerData.
     attr = sproto.decode_typed(sproto.as_bytes(d[2]), ATTRIBUTE_OTHER_SPEC)
@@ -139,7 +139,7 @@ async def test_real_client_world_entry_flow(server):
     # line_count(2)} — parsed by the test client with the push spec
     enter = await c.next_push(P.ENTER_MAP)
     assert enter is not None, "server must push enter_map after pick"
-    assert sproto.as_str(enter.body[0]) == "1"
+    assert sproto.as_str(enter.body[0]) == "11"
 
     # 2) the client loads the map and answers map_ready
     await c.send_request(P.MAP_READY, {})

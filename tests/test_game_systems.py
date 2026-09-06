@@ -52,7 +52,7 @@ async def test_npcs_are_created_on_map_entry(server):
                                   {0: "i", 1: "o", 2: "o", 3: "o",
                                    4: "i", 5: "i"})[0]
     await c.rpc(P.CHARACTER_PICK, {0: char_id})
-    await c.send_request(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})
+    await c.send_request(P.ENTER_MAP, {0: "11", 1: 0, 2: 1})
     # read the push burst: response + npc_create per NPC
     npc_frames = []
     for _ in range(10):
@@ -63,9 +63,10 @@ async def test_npcs_are_created_on_map_entry(server):
                 npc_frames.append(sproto.decode_typed(
                     sproto.as_bytes(frame.body[0]),
                     {0: "i", 1: "i", 2: "i", 3: "i", 4: "i", 5: "o"}))
-        if len(npc_frames) >= len(economy.NPC_SPAWNS["1"]):
+        if len(npc_frames) >= len(economy.NPC_SPAWNS[economy.MAIN_CITY_MAP]):
             break
-    assert len(npc_frames) == len(economy.NPC_SPAWNS["1"]), "all map NPCs pushed"
+    assert len(npc_frames) == len(economy.NPC_SPAWNS[economy.MAIN_CITY_MAP]), \
+        "all map NPCs pushed"
     assert {n[1] for n in npc_frames} == {1, 2, 3}
     await c.close()
 

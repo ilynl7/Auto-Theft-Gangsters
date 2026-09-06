@@ -27,7 +27,7 @@ class WorldPlayer:
         self.level = level
         self.sex = sex
         self.profession = profession
-        self.map_id = "1"
+        self.map_id = economy.MAIN_CITY_MAP
         self.line_index = 0
         self.pos = {"x": 0, "y": 0, "z": 0, "o": 0}
         self.moving = False
@@ -204,7 +204,7 @@ _DEFAULT_HP = 120
 
 
 def _general_blob(name: str, profession: int, line_index: int = 0,
-                  map_id: str = "1") -> bytes:
+                  map_id: str = economy.MAIN_CITY_MAP) -> bytes:
     return P._enc.encode_object({
         0: name, 1: profession, 2: line_index, 3: map_id,
     })
@@ -276,7 +276,8 @@ def _char_stats(level: int, exp: int = 0):
 
 def encode_character_blob(char_id: int, name: str, level: int,
                           pos_blob: bytes, profession: int = 0,
-                          line_index: int = 0, map_id: str = "1",
+                          line_index: int = 0,
+                          map_id: str = economy.MAIN_CITY_MAP,
                           exp: int = 0, gold: int = 0, diamond: int = 0,
                           hp: int = None) -> bytes:
     """Full SprotoType.character blob for main_player_create.
@@ -304,7 +305,8 @@ def encode_character_blob(char_id: int, name: str, level: int,
 
 def encode_character_aoi_blob(char_id: int, name: str, level: int,
                               pos_blob: bytes, profession: int = 0,
-                              line_index: int = 0, map_id: str = "1",
+                              line_index: int = 0,
+                              map_id: str = economy.MAIN_CITY_MAP,
                               exp: int = 0, hp: int = None) -> bytes:
     """SprotoType.character_aoi blob for aoi_add (NOT SprotoType.character!).
 

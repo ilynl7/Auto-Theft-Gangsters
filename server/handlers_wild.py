@@ -54,7 +54,8 @@ class WildHandlersMixin:
         if row is None:
             s.respond(msg, {0: 1})
             return
-        map_id = s.world_player.map_id if s.world_player else "1"
+        map_id = s.world_player.map_id if s.world_player \
+            else economy.MAIN_CITY_MAP
         boss = self._boss_npc(map_id)
         kind_def = economy.NPC_KINDS[economy.WILD_BOSS["kind"]]
         s.respond(msg, {

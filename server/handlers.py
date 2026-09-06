@@ -369,7 +369,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         request schema — a server that waits for the client to request it
         deadlocks the loading widget.
         """
-        map_id = row["map_id"] or "1"
+        # 0 means "never entered the world yet"; fall back to the main city.
+        # NEVER default to map "1" — in the client's MapInfoData table that is
+        # the LoadingScene placeholder, and entering it hangs the loader.
+        map_id = row["map_id"] if row["map_id"] not in (None, "", "1") \
+            else economy.MAIN_CITY_MAP
         wp = W.WorldPlayer(s, row["id"], row["name"], row["level"],
                            row["sex"], row["profession"])
         wp.map_id = map_id
@@ -389,7 +393,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # Legacy request form (tests / reconnect helpers). The real client
         # never requests enter_map — the server pushes it after pick, and
         # the client answers with map_ready.
-        map_id = msg.body.get(0, "1")
+        map_id = msg.body.get(0, economy.MAIN_CITY_MAP)
         line_index = msg.body.get(1, 0)
         row = getattr(s, "picked_character", None)
         if row is None:

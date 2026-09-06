@@ -228,14 +228,14 @@ async def test_map_and_line_helpers(server):
     a, a_id = await login_and_pick(game_port, "Mapper")
     b, _ = await login_and_pick(game_port, "LineHop")
 
-    resp = await a.rpc(P.REQUEST_LINE_STATE, {0: "1"})
+    resp = await a.rpc(P.REQUEST_LINE_STATE, {0: "11"})
     counts = resp.body[0]             # decoded via UPDATE_LINE_STATE "ia"
-    assert sum(counts) == 2, "both players on map 1"
+    assert sum(counts) == 2, "both players on the main map"
 
     # b switches to line 1 — a no longer sees b's line
     resp = await b.rpc(P.CHANGE_SCENE_LINE, {0: 1})
     assert resp.body[0] == 0
-    resp = await a.rpc(P.REQUEST_LINE_STATE, {0: "1"})
+    resp = await a.rpc(P.REQUEST_LINE_STATE, {0: "11"})
     counts = resp.body[0]
     assert counts[0] == 1 and counts[1] == 1
 
@@ -243,13 +243,13 @@ async def test_map_and_line_helpers(server):
     resp = await a.rpc(P.ENTER_NEW_MAP, {0: "2"})
     assert resp.body[0] == 0
     assert a_id not in [p.char_id for p in
-                        srv.world.maps.get("1", {}).values()]
+                        srv.world.maps.get("11", {}).values()]
     resp = await a.rpc(P.ENTER_TELEPORT_POINT, {0: 1})
     assert resp.body[0] == 0
-    assert a_id in [p.char_id for p in srv.world.maps.get("1", {}).values()]
+    assert a_id in [p.char_id for p in srv.world.maps.get("11", {}).values()]
 
-    resp = await a.rpc(P.UPDATE_PLAYER_MAP_INFO, {0: "1", 1: 0})
-    assert resp.body[0] == "1"
+    resp = await a.rpc(P.UPDATE_PLAYER_MAP_INFO, {0: "11", 1: 0})
+    assert resp.body[0] == "11"
     await a.close()
     await b.close()
 

@@ -53,7 +53,7 @@ async def test_wild_boss_info_and_enter(server):
     assert cd is not None and cd.body[0] == economy.WILD_BOSS["countdown"]
 
     # the boss exists in the world registry for map 1
-    map_bosses = srv.world.bosses.get("1")
+    map_bosses = srv.world.bosses.get("11")
     assert map_bosses is not None
     await c.close()
 
