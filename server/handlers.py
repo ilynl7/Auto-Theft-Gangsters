@@ -259,16 +259,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
 
     async def h_character_list(self, s: Session, msg) -> None:
         rows = self.server.db.list_characters(s.account_id or 0)
-        chars = [
-            sproto.encode_object({
-                0: r["id"],
-                1: r["name"],
-                2: r["level"],
-                3: r["sex"],
-            })
-            for r in rows
-        ]
-        # character_list.response {character(0)} — map of overview objects
+        # character_list.response {character(0)} — read_map of
+        # character_overview objects (same wire layout as an object array).
+        # The client dereferences .general.profession, .attribute_other.level
+        # and .visual on each — a flat {id,name,level,sex} blob crashes it.
+        chars = [W.encode_character_overview(r) for r in rows]
         s.respond(msg, {0: sproto.encode_object_array(chars)})
 
     async def h_character_create(self, s: Session, msg) -> None:
@@ -310,9 +305,10 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             self.server.db.set_equipped(row["id"], 0, start_weapon)
         for skill_id in prof_def["skills"]:
             self.server.db.learn_skill(row["id"], skill_id)
-        overview = sproto.encode_object({
-            0: row["id"], 1: row["name"], 2: row["level"], 3: row["sex"],
-        })
+        # character_create.response {character(0), errno(1)} — the client
+        # reads .general.profession, .createtime and .attribute_other.level
+        # off a character_overview, then immediately sends character_pick.
+        overview = W.encode_character_overview(row)
         s.respond(msg, {0: overview, 1: 0})
 
     async def h_character_pick(self, s: Session, msg) -> None:
@@ -367,7 +363,8 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         deadlocks the loading widget.
         """
         map_id = row["map_id"] or "1"
-        wp = W.WorldPlayer(s, row["id"], row["name"], row["level"], row["sex"])
+        wp = W.WorldPlayer(s, row["id"], row["name"], row["level"],
+                           row["sex"], row["profession"])
         wp.map_id = map_id
         wp.line_index = 0
         wp.pos = {
@@ -395,7 +392,8 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             return
         if isinstance(map_id, int):
             map_id = str(map_id)
-        wp = W.WorldPlayer(s, row["id"], row["name"], row["level"], row["sex"])
+        wp = W.WorldPlayer(s, row["id"], row["name"], row["level"],
+                           row["sex"], row["profession"])
         wp.map_id = map_id
         wp.line_index = line_index
         wp.pos = {

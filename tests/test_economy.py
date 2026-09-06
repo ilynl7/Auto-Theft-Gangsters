@@ -28,8 +28,10 @@ async def login_and_pick(game_port, name):
                           3: "1.012.017", 4: "Unity4.7", 5: 1, 6: 12345})
     general = sproto.encode_object({0: name, 2: 0})
     resp = await c.rpc(P.CHARACTER_CREATE, {0: general})
+    # response carries a character_overview {id(0), ...}
     char_id = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
-                                  {0: "i", 1: "s", 2: "i", 3: "i"})[0]
+                                  {0: "i", 1: "o", 2: "o", 3: "o",
+                                   4: "i", 5: "i"})[0]
     await c.rpc(P.CHARACTER_PICK, {0: char_id})
     await c.rpc(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})
     # drain the post-enter push burst (aoi_add, npc_create, sync_skill_info,

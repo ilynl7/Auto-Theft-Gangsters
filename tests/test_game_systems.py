@@ -49,7 +49,8 @@ async def test_npcs_are_created_on_map_entry(server):
     general = sproto.encode_object({0: "NpcWatcher", 2: 0})
     resp = await c.rpc(P.CHARACTER_CREATE, {0: general})
     char_id = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
-                                  {0: "i", 1: "s", 2: "i", 3: "i"})[0]
+                                  {0: "i", 1: "o", 2: "o", 3: "o",
+                                   4: "i", 5: "i"})[0]
     await c.rpc(P.CHARACTER_PICK, {0: char_id})
     await c.send_request(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})
     # read the push burst: response + npc_create per NPC

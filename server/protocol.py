@@ -683,8 +683,10 @@ RESPONSE_SPECS = {
     CHARACTER_CREATE: {0: "o", 1: "i"},
     CHARACTER_PICK: {0: "i"},
     MAP_READY: {},
-    # enter_map is a server PUSH: {mapInfoId(0), line_index(1), line_count(2)}
-    ENTER_MAP: {0: "s", 1: "i", 2: "i"},
+    # enter_map response (legacy request path): {character(0)}; the PUSH
+    # variant (no session) is {mapInfoId(0), line_index(1), line_count(2)}
+    # and is decoded by the push path in tests.
+    ENTER_MAP: {0: "o"},
     HEART_BEAT: {0: "i", 1: "i"},
     # provisional (see server/economy.py for the field layout notes)
     ACCEPT_MISSION: {0: "i"},

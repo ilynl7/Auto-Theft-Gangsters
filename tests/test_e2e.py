@@ -135,7 +135,9 @@ class Client:
 
 
 GAME_SERVER_SPEC = {0: "i", 1: "s", 2: "s", 3: "i", 4: "i"}
-CHAR_OVERVIEW_SPEC = {0: "i", 1: "s", 2: "i", 3: "i"}
+# character_overview: {id(0), general(1), attribute_other(2), visual(3),
+# createtime(4), forbidden(5)}
+CHAR_OVERVIEW_SPEC = {0: "i", 1: "o", 2: "o", 3: "o", 4: "i", 5: "i"}
 
 
 @pytest_asyncio.fixture
@@ -276,7 +278,9 @@ async def test_full_login_flow(server):
     char_overview = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
                                         CHAR_OVERVIEW_SPEC)
     char_id = char_overview[0]
-    assert char_overview[1] == "TestGangster"
+    # general(1) carries the name at tag 0
+    general = sproto.decode_fields(sproto.as_bytes(char_overview[1]))
+    assert general[0] == "TestGangster"
 
     # --- pick the character ---
     resp = await g.rpc(P.CHARACTER_PICK, {0: char_id})
