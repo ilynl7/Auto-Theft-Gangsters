@@ -279,7 +279,7 @@ def encode_character_blob(char_id: int, name: str, level: int,
                           line_index: int = 0,
                           map_id: str = economy.MAIN_CITY_MAP,
                           exp: int = 0, gold: int = 0, diamond: int = 0,
-                          hp: int = None) -> bytes:
+                          hp: int = None, skills: list = None) -> bytes:
     """Full SprotoType.character blob for main_player_create.
 
     The client's ObjInitPlayerData.InitData(character) hard-dereferences
@@ -288,10 +288,14 @@ def encode_character_blob(char_id: int, name: str, level: int,
     its exact wire tag or the handler throws and the main player never
     spawns (eternal loading). download=2 also marks the client as fully
     downloaded (main_player_create_handler sets IsFinishDownload).
+
+    `skills` is an optional [(skill_id, level)] list encoded at tag 8 as
+    map<string, skill_info>; skillId is decoded with read_string, so the id
+    MUST be a string ("101"), never an integer.
     """
     if hp is None:
         hp, _ = _char_stats(level, exp)
-    return P._enc.encode_object({
+    fields = {
         0: char_id,
         1: _general_blob(name, profession, line_index, map_id),
         2: _attribute_other_blob(hp, exp, level),
@@ -300,7 +304,12 @@ def encode_character_blob(char_id: int, name: str, level: int,
         7: pos_blob,
         13: _runtime_blob(hp, exp),
         15: 2,                # download = 2 -> IsFinishDownload = true
-    })
+    }
+    if skills:
+        skill_blobs = [P.encode_skill_info(sid, lvl) for sid, lvl in skills]
+        fields[8] = P._enc.encode_object_array(skill_blobs)
+        fields[16] = 0        # skill_index: hard-dereferenced by InitData
+    return P._enc.encode_object(fields)
 
 
 def encode_character_aoi_blob(char_id: int, name: str, level: int,
@@ -360,17 +369,19 @@ def encode_aoi_update_move(player: WorldPlayer) -> bytes:
     return P._enc.encode_object({0: move})
 
 
-def encode_main_player_create(player: WorldPlayer) -> bytes:
+def encode_main_player_create(player: WorldPlayer,
+                              skills: list = None) -> bytes:
     """main_player_create.request {character(0), movement(1)}.
 
     character is a full SprotoType.character blob (see encode_character_blob);
     a partial one crashes the client's spawn handler and hangs the loading
-    screen.
+    screen. `skills` is an optional [(skill_id, level)] list encoded as the
+    client's map<string, skill_info> (string skillId key!).
     """
     character = encode_character_blob(
         player.char_id, player.name, player.level, player.movement_blob(),
         profession=player.profession, line_index=player.line_index,
-        map_id=player.map_id)
+        map_id=player.map_id, skills=skills)
     return P._enc.encode_object({
         0: character,
         1: player.movement_blob(),

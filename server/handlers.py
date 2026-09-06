@@ -346,7 +346,9 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             return
         s.pending_world_player = None
         s.world_player = wp
-        s.push(P.MAIN_PLAYER_CREATE, {0: W.encode_main_player_create(wp)})
+        s.push(P.MAIN_PLAYER_CREATE, {0: W.encode_main_player_create(
+            wp, skills=[(r["skill_id"], r["level"])
+                        for r in self.server.db.list_skills(wp.char_id)])})
         for other in self.server.world.others(wp.map_id, wp.char_id):
             s.push(P.AOI_ADD, {0: W.encode_aoi_add(other)})
         for npc in self.server.world.npcs_in(wp.map_id):
@@ -924,6 +926,10 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         return attack
 
     def _sync_skills(self, s: Session, char_id: int) -> None:
+        # The client parses tag 0 as map<string, skill_info>: an object array
+        # of skill_info blobs whose string skillId becomes the dict key.
+        # Elements must be skill_info objects (string skillId!) or the client
+        # throws "invalid pos" inside read_string and drops the push.
         rows = self.server.db.list_skills(char_id)
         blobs = [P.encode_skill_info(r["skill_id"], r["level"]) for r in rows]
         s.push(P.SYNC_SKILL_INFO, {0: sproto.encode_object_array(blobs)})
@@ -1302,10 +1308,14 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             return
         db.add_friend(row["id"], target["id"])
         db.add_friend(target["id"], row["id"])
-        s.respond(msg, {0: 0, 1: name})
+        # ret_add_friend carries ONE friend_info object (see encode_friend_entry)
+        online = self.server.world.get_player_anywhere(target["id"]) is not None
+        s.respond(msg, {0: P.encode_friend_entry(
+            target["id"], target["name"], target["level"], online)})
         other = self.server.world.get_player_anywhere(target["id"])
         if other is not None:
-            other.conn.push(P.NOTICE_ADD_FRIEND, {0: row["name"]})
+            other.conn.push(P.NOTICE_ADD_FRIEND, {0: P.encode_friend_entry(
+                row["id"], row["name"], row["level"], True)})
 
     async def h_del_friend(self, s: Session, msg) -> None:
         db = self.server.db
@@ -1323,7 +1333,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         s.respond(msg, {0: 0})
         other = self.server.world.get_player_anywhere(target["id"])
         if other is not None:
-            other.conn.push(P.BE_DELETED_FRIEND, {0: row["name"]})
+            other.conn.push(P.BE_DELETED_FRIEND, {0: row["id"]})
 
     async def h_ask_character_info(self, s: Session, msg) -> None:
         row = self._require_char(s)
@@ -1347,15 +1357,16 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         row = self._require_char(s)
         if row is None:
             return
-        entries = []
+        # The client's syn_friend_info handler adds ONE friend per push, so
+        # send one friend_info object per message (empty pushes are fine and
+        # simply no-op client-side — HasFriend is false).
         for f in db.list_friends(row["id"]):
             fr = db.get_character(f["friend_id"])
             if fr is None:
                 continue
             online = self.server.world.get_player_anywhere(fr["id"]) is not None
-            entries.append(P.encode_friend_entry(fr["id"], fr["name"],
-                                                 fr["level"], online))
-        s.push(P.SYN_FRIEND_INFO, {0: sproto.encode_object_array(entries)})
+            s.push(P.SYN_FRIEND_INFO, {0: P.encode_friend_entry(
+                fr["id"], fr["name"], fr["level"], online)})
 
     # ------------------------------------------------------------------
     # mail

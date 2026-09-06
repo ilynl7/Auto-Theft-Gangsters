@@ -230,7 +230,11 @@ async def test_friends_flow(server):
     await a.drain(0.4)
 
     resp = await a.rpc(P.ADD_FRIEND, {0: "FriendB"})
-    assert resp.body[0] == 0
+    # ret_add_friend carries a friend_info object:
+    # {characterId(0), friendId(1), name(2), level(3), ...}
+    fr = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
+                             {0: "i", 1: "i", 2: "s", 3: "i"})
+    assert fr[1] == b_id and fr[2] == "FriendB"
     friends = {f["friend_id"] for f in srv.db.list_friends(a_id)}
     assert b_id in friends
     # bidirectional
@@ -238,9 +242,11 @@ async def test_friends_flow(server):
     assert a_id in friends_b
 
     resp = await a.rpc(P.ASK_CHARACTER_INFO, {0: "FriendB"})
+    # the client's ask_character_info handler ignores the body (no-op), so we
+    # answer with the same friend_info object as ret_add_friend
     entry = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
-                                {0: "i", 1: "s", 2: "i", 3: "i"})
-    assert entry[0] == b_id and entry[1] == "FriendB"
+                                {0: "i", 1: "i", 2: "s", 3: "i"})
+    assert entry[1] == b_id and entry[2] == "FriendB"
 
     resp = await a.rpc(P.DEL_FRIEND, {0: "FriendB"})
     assert resp.body[0] == 0

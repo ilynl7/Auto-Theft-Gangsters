@@ -714,6 +714,8 @@ RESPONSE_SPECS = {
     SYNC_FASHION_BACKPACK_ITEM: {0: "oa"},
     SYNC_ITEM_PACK: {0: "oa"},
     RET_SKILL_USE: {0: "i", 1: "i"},
+    # sync_skill_info: the client reads tag 0 as map<string, skill_info> —
+    # an OBJECT ARRAY of skill_info blobs (key taken from v.skillId)
     SYNC_SKILL_INFO: {0: "oa"},
     SHOW_DAMAGE_BOARD: {0: "i", 1: "i", 2: "i"},
     DROP_ITEM_INFO: {0: "i", 1: "i", 2: "i"},
@@ -732,9 +734,14 @@ RESPONSE_SPECS = {
     RET_GUILD_DONATE: {0: "i", 1: "i"},
     RET_SEARCH_GUILD: {0: "oa"},
     SYNC_GUILD_NEW_MEMBER: {0: "s"},
-    RET_ADD_FRIEND: {0: "i", 1: "s"},
+    # ret_add_friend / notice_add_friend: ONE friend_info object at tag 0
+    RET_ADD_FRIEND: {0: "o"},
+    NOTICE_ADD_FRIEND: {0: "o"},
+    # be_deleted_friend / ret_del_friend: characterId integer at tag 0
     RET_DEL_FRIEND: {0: "i"},
-    SYN_FRIEND_INFO: {0: "oa"},
+    BE_DELETED_FRIEND: {0: "i"},
+    # syn_friend_info: ONE friend_info object at tag 0, not an array
+    SYN_FRIEND_INFO: {0: "o"},
     MAIL_UPDATE: {0: "o"},
     SEND_MAIL_BOX: {0: "oa"},
     MAIL_DELETE: {0: "i"},
@@ -961,15 +968,28 @@ def encode_npc_create(npc) -> bytes:
 
 
 def encode_skill_info(skill_id: int, level: int) -> bytes:
-    """sync_skill_info element: {skill_id(0), level(1)}."""
-    return _enc.encode_object({0: skill_id, 1: level})
+    """sync_skill_info / character.skills element (SprotoType.skill_info).
+
+    The client decodes skillId as a STRING (read_string) and uses it as the
+    dictionary key; it must be a string like "101", not an integer — an int
+    here makes read_string hit the end of the stream and the push dies with
+    "Exception: invalid pos" on the client.
+    """
+    return _enc.encode_object({0: str(skill_id), 1: level})
 
 
 def encode_friend_entry(char_id: int, name: str, level: int = 1,
                         online: bool = False) -> bytes:
-    """syn_friend_info element: {char_id(0), name(1), level(2), online(3)}."""
+    """friend_info object (SprotoType.friend_info).
+
+    Fields: characterId(0), friendId(1), name(2), level(3), profession(4),
+    combValue(5), state(6), timeInfo(7), friendType(8). The client's friend
+    handlers (syn_friend_info / ret_add_friend / notice_add_friend) add ONE
+    friend_info per push — send a single object, never an array.
+    """
     return _enc.encode_object({
-        0: char_id, 1: name, 2: level, 3: 1 if online else 0,
+        0: char_id, 1: char_id, 2: name, 3: level, 4: 0,
+        6: 1 if online else 0,
     })
 
 

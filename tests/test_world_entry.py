@@ -22,6 +22,7 @@ from server.world import encode_character_blob, encode_character_aoi_blob, \
     encode_character_overview
 
 from tests.test_e2e import _connect, server  # noqa: F401  (pytest fixture)
+from tests.test_economy import decode_object_array
 
 GENERAL_SPEC = {0: "s", 1: "i", 2: "i", 3: "s"}
 CHARACTER_SPEC = {0: "i", 1: "o", 2: "o", 5: "o", 6: "o", 7: "o",
@@ -199,5 +200,59 @@ async def test_aoi_add_uses_character_aoi_blob(server):
     assert 7 not in char, "aoi_add must use character_aoi, not character"
     assert 5 in char and 1 in char and 2 in char
 
+    await a.close()
+    await b.close()
+
+
+@pytest.mark.asyncio
+async def test_sync_skill_info_parses_with_client_schema(server):
+    """sync_skill_info: map<string, skill_info> — skillId must be a STRING.
+
+    The real client crashed with "Exception: invalid pos" in
+    SprotoType.skill_info.decode() when the server sent skillId as an
+    integer (read_string on an int-encoded field runs off the buffer),
+    killing the packet loop and freezing the loading window at 90%.
+    """
+    srv, gate_port, game_port = server
+    c, char_id = await _login_and_create(game_port, "SkillStr")
+
+    skill = await c.next_push(P.SYNC_SKILL_INFO)
+    assert skill is not None, "sync_skill_info pushed after pick"
+    # client: deserialize.read_map((skill_info v) => v.skillId) == object array
+    entries = decode_object_array(skill.body[0])
+    assert entries, "at least one skill synced"
+    for entry in entries:
+        d = sproto.decode_typed(sproto.as_bytes(entry),
+                                {0: "s", 1: "i"})
+        assert isinstance(d[0], str) and d[0], "skillId must be a string"
+        assert d[0].isdigit()
+    await c.close()
+
+
+@pytest.mark.asyncio
+async def test_syn_friend_info_single_object(server):
+    """syn_friend_info carries ONE friend_info object at tag 0 (fields:
+    characterId(0), friendId(1), name(2), level(3), profession(4))."""
+    srv, gate_port, game_port = server
+    a, a_id = await _login_and_create(game_port, "FriendSyncA")
+    b, b_id = await _login_and_create(game_port, "FriendSyncB")
+    for c in (a, b):
+        await c.next_push(P.ENTER_MAP)
+        await c.send_request(P.MAP_READY, {})
+        await c.next_push(P.MAIN_PLAYER_CREATE)
+    await a.drain(0.3)
+
+    resp = await a.rpc(P.ADD_FRIEND, {0: "FriendSyncB"})
+    # ret_add_friend must carry a friend_info OBJECT
+    fr = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
+                             {0: "i", 1: "i", 2: "s", 3: "i"})
+    assert fr[0] == b_id and fr[1] == b_id and fr[2] == "FriendSyncB"
+
+    # any syn_friend_info push must parse as a single friend_info
+    push = await a.next_push(P.SYN_FRIEND_INFO, timeout=1.5)
+    if push is not None:
+        d = sproto.decode_typed(sproto.as_bytes(push.body[0]),
+                                {0: "i", 1: "i", 2: "s", 3: "i"})
+        assert d[2] == "FriendSyncB"
     await a.close()
     await b.close()
