@@ -1,0 +1,8 @@
+Could not find a type named 'Sproto.SprotoType'.
+Did you mean one of the following?
+    Sproto.SprotoTypeBase
+    Sproto.SprotoTypeDeserialize
+    Sproto.SprotoTypeFieldOP
+    Sproto.SprotoTypeReader
+    Sproto.SprotoTypeSerialize
+    Sproto.SprotoTypeSize
