@@ -283,8 +283,10 @@ async def test_full_login_flow(server):
     assert general[0] == "TestGangster"
 
     # --- pick the character ---
+    # success reply carries an EMPTY body: PickResponse treats any body with
+    # an errno field (even 0) as failure + disconnect
     resp = await g.rpc(P.CHARACTER_PICK, {0: char_id})
-    assert resp.body[0] == 0
+    assert resp.body == {}
 
     # --- enter map ---
     resp = await g.rpc(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})

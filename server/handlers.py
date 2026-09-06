@@ -315,10 +315,17 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         char_id = msg.body.get(0)
         row = self.server.db.get_character(char_id)
         if row is None or (row["account_id"] != (s.account_id or 0)):
-            s.respond(msg, {0: 1})  # errno
+            s.respond(msg, {0: 1})  # errno 1: not found
             return
         s.picked_character = row
-        s.respond(msg, {0: 0})  # errno 0 = ok
+        # Success reply carries an EMPTY body. The client's PickResponse
+        # treats ANY response with an errno field — including errno 0 — as a
+        # failure: it shows "Please try later!" (#{100153}), calls
+        # LeaveGame() (disconnect) and drops back to the login scene. The
+        # success path is just CloseBox()... which never runs here, so the
+        # wait box also hangs. The real flow is: empty response, then the
+        # enter_map push drives the scene load.
+        s.respond(msg, {})
         # baseline syncs right after pick: skills + friends + storage
         self._sync_skills(s, row["id"])
         await self._push_friend_info(s)
