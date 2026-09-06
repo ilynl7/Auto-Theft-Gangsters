@@ -145,6 +145,13 @@ CREATE TABLE IF NOT EXISTS skills (
     level       INTEGER NOT NULL DEFAULT 1,
     UNIQUE(char_id, skill_id)
 );
+
+CREATE TABLE IF NOT EXISTS pvp_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    blob        BLOB NOT NULL,
+    created_at  INTEGER NOT NULL
+);
 """
 
 
@@ -641,6 +648,34 @@ class Database:
         )
         self._conn.commit()
         return level
+
+    # -- pvp ladder -------------------------------------------------------------
+    def append_pvp_history(self, char_id: int, blob: bytes) -> None:
+        """Record a ladder battle (blob is the pre-encoded wire object)."""
+        self._conn.execute(
+            "INSERT INTO pvp_history (char_id, blob, created_at)"
+            " VALUES (?, ?, ?)", (char_id, blob, int(time.time())))
+        self._conn.commit()
+
+    def list_pvp_history(self, char_id: int, limit: int = 20):
+        return self._conn.execute(
+            "SELECT blob FROM pvp_history WHERE char_id = ?"
+            " ORDER BY id DESC LIMIT ?", (char_id, limit)
+        ).fetchall()
+
+    def top_pvp_scores(self, limit: int = 10):
+        """Top ladder scores joined with character names."""
+        progress = self._conn.execute(
+            "SELECT char_id, value FROM progress WHERE key = 'pvp_score'"
+            " ORDER BY value DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in progress:
+            row = self._conn.execute(
+                "SELECT name FROM characters WHERE id = ?", (r["char_id"],)
+            ).fetchone()
+            if row is not None:
+                out.append({"name": row["name"], "score": r["value"]})
+        return out
 
     # -- cars / mounts ----------------------------------------------------------
     def list_cars(self, char_id: int):

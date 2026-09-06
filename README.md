@@ -19,14 +19,19 @@ python3 -m server.main   # gate :9777 + game server :9555
 Ongoing focus:
 
 - Client compatibility testing with the v1.19 APK
-- Implementing the remaining game systems (PvP arenas, copy scenes, tower,
-  rankings, dances)
+- Fine-tuning provisional field layouts for systems whose SprotoType classes
+  were not preserved in the decompiled dump (dungeons, PvP, tower, slots)
 
 Implemented game systems: login/character flow, world AOI + movement sync,
 chat, missions + daily missions, shops + car shop, full inventory (weapons,
 armor, badges, fashion, storage, item packages), NPC combat with loot/exp/
 level-ups, skills, respawn, guilds (create/join/donate/guild shop/ranks),
-friends, mail, sign-in rewards, and car/mount ownership.
+friends, mail, sign-in rewards, car/mount ownership, copy scenes (wave-based
+dungeons with countdown + rewards), the rank PvP ladder (天梯 matchmaking,
+score/history/win-count rewards), the endless tower climb (floors, rewards,
+reset, wipe-out), the slot machine (spins + accumulating sum-reward pool),
+map/line switching + teleport points, and client progress tags (tutorial,
+function unlocks, renames).
 
 ---
 

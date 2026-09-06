@@ -25,6 +25,36 @@ class Client:
         self.writer = writer
         self.decoder = sproto.FrameDecoder()
         self.session_counter = 100
+        self.pushes = []   # queue of server push frames seen while waiting
+
+    def _take_push(self, want_type):
+        for i, f in enumerate(self.pushes):
+            if f.type == want_type:
+                return self.pushes.pop(i)
+        return None
+
+    async def next_push(self, want_type: int, timeout: float = 3.0):
+        """Return the next server push of `want_type`, reading as needed."""
+        import time
+        f = self._take_push(want_type)
+        if f is not None:
+            return f
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            try:
+                data = await asyncio.wait_for(self.reader.read(8192), remaining)
+            except asyncio.TimeoutError:
+                break
+            if not data:
+                break
+            for payload in self.decoder.feed(data):
+                frame = P.parse_frame(payload, response=True)
+                if frame.type is not None and frame.session is None:
+                    if frame.type == want_type:
+                        return frame
+                    self.pushes.append(frame)
+        return None
 
     async def send_request(self, tag: int, body: dict = None):
         self.session_counter += 1
@@ -46,12 +76,16 @@ class Client:
             assert remaining > 0, "no response received"
             data = await asyncio.wait_for(self.reader.read(8192), remaining)
             frames = self.decoder.feed(data)
+            response = None
             for payload in frames:
                 frame = P.parse_frame(payload, response=True)
                 if frame.type is not None and frame.session is not None \
                         and frame.session == self.session_counter:
-                    return frame
-                # else: server push (aoi/npc/sync/...) — skip
+                    response = frame
+                elif frame.type is not None and frame.session is None:
+                    self.pushes.append(frame)   # keep for next_push()
+            if response is not None:
+                return response
 
     async def rpc(self, tag: int, body: dict = None, timeout: float = 5.0):
         await self.send_request(tag, body)

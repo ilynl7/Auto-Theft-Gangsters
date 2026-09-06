@@ -15,6 +15,7 @@ from . import protocol as P
 from . import sproto
 from . import world as W
 from .session import Session
+from .handlers_pvp import PvpHandlersMixin
 
 log = logging.getLogger("atg.handlers")
 
@@ -23,7 +24,7 @@ VERIFY_OK = 0
 VERIFY_NEW_ACCOUNT = 2
 
 
-class Handlers:
+class Handlers(PvpHandlersMixin):
     """Registry of tag -> async handler(session, msg)."""
 
     def __init__(self, server) -> None:
@@ -110,6 +111,44 @@ class Handlers:
             P.USE_MOUNT: self.h_use_mount,
             P.UNUSE_MOUNT: self.h_unuse_mount,
             P.BUY_CAR_SHOP: self.h_buy_car_shop,
+            # copy scenes / dungeons
+            P.ENTER_COPY_SCENE: self.h_enter_copy_scene,
+            P.LEAVE_COPY_SCENE: self.h_leave_copy_scene,
+            P.SINGLE_COPY_SCENE_NPC_DIE: self.h_single_copy_scene_npc_die,
+            P.ASK_COPYSCENES_INFO: self.h_ask_copyscenes_info,
+            P.ENTER_NEW_MAP: self.h_enter_new_map,
+            P.CHANGE_SCENE_LINE: self.h_change_scene_line,
+            P.REQUEST_LINE_STATE: self.h_request_line_state,
+            P.ENTER_TELEPORT_POINT: self.h_enter_teleport_point,
+            P.UPDATE_PLAYER_MAP_INFO: self.h_update_player_map_info,
+            # rank pvp ladder
+            P.REQUEST_RANDOM_RANK_PVP_OPPONENT:
+                self.h_request_random_rank_pvp_opponent,
+            P.RANK_PVP_PLAYER_ATTACK: self.h_rank_pvp_player_attack,
+            P.RANK_PVP_OTHER_PLAYER_DIE: self.h_rank_pvp_other_player_die,
+            P.REQUEST_TOP_RANK_PVP_LIST: self.h_request_top_rank_pvp_list,
+            P.REQUEST_RANK_PVP_DATA: self.h_request_rank_pvp_data,
+            P.REQUEST_RANK_PVP_HISTORY: self.h_request_rank_pvp_history,
+            P.TIANTI_REQ_WIN_COUNT_REWARDS: self.h_tianti_rewards,
+            # tower
+            P.REQUEST_TOWER_COPY_INFO: self.h_request_tower_info,
+            P.ENTER_TOWER_COPY_INFO: self.h_request_tower_info,
+            P.CONTINUE_TOWER_COPY: self.h_continue_tower_copy,
+            P.GRANT_TOWER_REWARD: self.h_grant_tower_reward,
+            P.TOWER_RESET: self.h_tower_reset,
+            P.TOWER_WIPE_OUT: self.h_tower_wipe_out,
+            # slot machine
+            P.REQUEST_SLOT_INFO: self.h_request_slot_info,
+            P.SPIN_SLOT: self.h_spin_slot,
+            P.REQUEST_SLOT_SUM_REWARD: self.h_request_slot_sum_reward,
+            # misc client progress
+            P.TUTORIAL_FINISH: self.h_tutorial_finish,
+            P.UNLOCK_FUNCTION_COMPLETE: self.h_unlock_function_complete,
+            P.START_DOWNLOAD: self.h_noop,
+            P.DOWNLOAD_FINISH: self.h_noop,
+            P.RE_NAME: self.h_re_name,
+            P.CHANGE_SHOW_TYPE: self.h_change_show_type,
+            P.IMPACT_NPC: self.h_impact_npc,
         }
 
     # ------------------------------------------------------------------

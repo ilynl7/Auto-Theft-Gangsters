@@ -168,6 +168,77 @@ RET_MOUNT_INFO = 630
 BUY_CAR_SHOP = 323
 RET_BUY_CAR_SHOP = 691
 
+# --- copy scenes / dungeons (real tag flow from the decompiled client) -----
+ENTER_NEW_MAP = 106
+ENTER_COPY_SCENE = 107
+LEAVE_COPY_SCENE = 108
+SINGLE_COPY_SCENE_NPC_DIE = 127
+ASK_COPYSCENES_INFO = 145
+STOP_LEAVE_COPY = 250
+NEXT_WAVE = 515
+COPY_SCENE_RESULT = 552
+SYNC_COPYSCENES_INFO = 555
+UPDATE_COPYSCENE_INFO = 561
+NOTICE_COPY_SCENE_INFO = 683
+NOTIFY_COPY_START_INFO = 629
+COUNT_DOWN = 553
+HIT_ACTION = 514
+CHANGE_SCENE_LINE = 155
+REQUEST_LINE_STATE = 219
+UPDATE_LINE_STATE = 568
+ENTER_TELEPORT_POINT = 251
+GATHER_OTHER_PLAYER = 321
+UPDATE_PLAYER_MAP_INFO = 324
+
+# --- rank pvp (tianTi ladder) ----------------------------------------------
+REQUEST_RANDOM_RANK_PVP_OPPONENT = 133
+RET_REQUEST_RANDOM_RANK_PVP_OPPONENT = 542
+REQUEST_TOP_RANK_PVP_LIST = 134
+RET_REQUEST_TOP_RANK_PVP_LIST = 543
+RANK_PVP_PLAYER_ATTACK = 136
+RANK_PVP_OTHER_PLAYER_DIE = 137
+SYN_RANK_PVP_DATA = 541
+RANK_PVP_HISTORY = 546
+RANK_PVP_START = 547
+RANK_PVP_REWARD = 545
+RANK_PVP_CREATE_ZOMBIE_USER = 544
+REQUEST_RANK_PVP_DATA = 210
+REQUEST_RANK_PVP_HISTORY = 211
+TIANTI_REQ_WIN_COUNT_REWARDS = 157
+TIANTTI_RESULT = 551
+REAL_PVP_REGISTER = 138
+REAL_PVP_STATE = 548
+
+# --- tower (climb floors of npcs) -------------------------------------------
+REQUEST_TOWER_COPY_INFO = 202
+RET_REQUEST_TOWER_COPY_INFO = 606
+ENTER_TOWER_COPY_INFO = 204
+CONTINUE_TOWER_COPY = 205
+GRANT_TOWER_REWARD = 203
+RET_GRANT_TOWER_REWARD = 625
+TOWER_RESET = 230
+RET_TOWER_RESET = 626
+TOWER_WIPE_OUT = 208
+RET_TOWER_WIPE_OUT = 607
+
+# --- slot machine (casino mini-game) ----------------------------------------
+REQUEST_SLOT_INFO = 242
+RET_SLOT_INFO = 633
+SPIN_SLOT = 243
+RET_SPIN_SLOT = 634
+REQUEST_SLOT_SUM_REWARD = 244
+RET_SLOT_SUM_REWARD = 635
+REQUEST_SLOT_REWARD = 249
+
+# --- misc client progress -----------------------------------------------------
+TUTORIAL_FINISH = 306
+UNLOCK_FUNCTION_COMPLETE = 268
+START_DOWNLOAD = 269
+DOWNLOAD_FINISH = 270
+RE_NAME = 301
+CHANGE_SHOW_TYPE = 223
+IMPACT_NPC = 298
+
 LOGIN_MAX_COUNT = 578
 RETRIEVE_ACCOUNT = 660
 
@@ -299,6 +370,67 @@ TAG_NAMES = {
     RET_MOUNT_INFO: "ret_mount_info",
     BUY_CAR_SHOP: "buy_car_shop",
     RET_BUY_CAR_SHOP: "ret_buy_car_shop",
+    ENTER_NEW_MAP: "enter_new_map",
+    ENTER_COPY_SCENE: "enter_copy_scene",
+    LEAVE_COPY_SCENE: "leave_copy_scene",
+    SINGLE_COPY_SCENE_NPC_DIE: "single_copy_scene_npc_die",
+    ASK_COPYSCENES_INFO: "ask_copyscenes_info",
+    STOP_LEAVE_COPY: "stop_leave_copy",
+    NEXT_WAVE: "next_wave",
+    COPY_SCENE_RESULT: "copy_scene_result",
+    SYNC_COPYSCENES_INFO: "sync_copyscenes_info",
+    UPDATE_COPYSCENE_INFO: "update_copyscene_info",
+    NOTICE_COPY_SCENE_INFO: "notice_copy_scene_info",
+    NOTIFY_COPY_START_INFO: "notify_copy_start_info",
+    COUNT_DOWN: "count_down",
+    HIT_ACTION: "hit_action",
+    CHANGE_SCENE_LINE: "change_scene_line",
+    REQUEST_LINE_STATE: "request_line_state",
+    UPDATE_LINE_STATE: "update_line_state",
+    ENTER_TELEPORT_POINT: "enter_teleport_point",
+    GATHER_OTHER_PLAYER: "gather_other_player",
+    UPDATE_PLAYER_MAP_INFO: "update_player_map_info",
+    REQUEST_RANDOM_RANK_PVP_OPPONENT: "request_random_rank_pvp_opponent",
+    RET_REQUEST_RANDOM_RANK_PVP_OPPONENT: "ret_request_random_rank_pvp_opponent",
+    REQUEST_TOP_RANK_PVP_LIST: "request_top_rank_pvp_list",
+    RET_REQUEST_TOP_RANK_PVP_LIST: "ret_request_top_rank_pvp_list",
+    RANK_PVP_PLAYER_ATTACK: "rank_pvp_player_attack",
+    RANK_PVP_OTHER_PLAYER_DIE: "rank_pvp_other_player_die",
+    SYN_RANK_PVP_DATA: "syn_rank_pvp_data",
+    RANK_PVP_HISTORY: "rank_pvp_history",
+    RANK_PVP_START: "rank_pvp_start",
+    RANK_PVP_REWARD: "rank_pvp_reward",
+    RANK_PVP_CREATE_ZOMBIE_USER: "rank_pvp_create_zombie_user",
+    REQUEST_RANK_PVP_DATA: "request_rank_pvp_data",
+    REQUEST_RANK_PVP_HISTORY: "request_rank_pvp_history",
+    TIANTI_REQ_WIN_COUNT_REWARDS: "tianti_req_win_count_rewards",
+    TIANTTI_RESULT: "tiantti_result",
+    REAL_PVP_REGISTER: "real_pvp_register",
+    REAL_PVP_STATE: "real_pvp_state",
+    REQUEST_TOWER_COPY_INFO: "request_tower_copy_info",
+    RET_REQUEST_TOWER_COPY_INFO: "ret_request_tower_copy_info",
+    ENTER_TOWER_COPY_INFO: "enter_tower_copy_info",
+    CONTINUE_TOWER_COPY: "continue_tower_copy",
+    GRANT_TOWER_REWARD: "grant_tower_reward",
+    RET_GRANT_TOWER_REWARD: "ret_grant_tower_reward",
+    TOWER_RESET: "tower_reset",
+    RET_TOWER_RESET: "ret_tower_reset",
+    TOWER_WIPE_OUT: "tower_wipe_out",
+    RET_TOWER_WIPE_OUT: "ret_tower_wipe_out",
+    REQUEST_SLOT_INFO: "request_slot_info",
+    RET_SLOT_INFO: "ret_slot_info",
+    SPIN_SLOT: "spin_slot",
+    RET_SPIN_SLOT: "ret_spin_slot",
+    REQUEST_SLOT_SUM_REWARD: "request_slot_sum_reward",
+    RET_SLOT_SUM_REWARD: "ret_slot_sum_reward",
+    REQUEST_SLOT_REWARD: "request_slot_reward",
+    TUTORIAL_FINISH: "tutorial_finish",
+    UNLOCK_FUNCTION_COMPLETE: "unlock_function_complete",
+    START_DOWNLOAD: "start_download",
+    DOWNLOAD_FINISH: "download_finish",
+    RE_NAME: "re_name",
+    CHANGE_SHOW_TYPE: "change_show_type",
+    IMPACT_NPC: "impact_npc",
     RELIFE_PLAYER: "relife_player",
     LOGIN_MAX_COUNT: "login_max_count",
     RETRIEVE_ACCOUNT: "retrieve_account",
@@ -436,6 +568,44 @@ REQUEST_SPECS = {
     USE_MOUNT: {0: "i"},
     UNUSE_MOUNT: {},
     BUY_CAR_SHOP: {0: "i"},        # car goods id
+    # copy scenes / dungeons (provisional)
+    ENTER_COPY_SCENE: {0: "i"},                 # copy scene id
+    LEAVE_COPY_SCENE: {},
+    SINGLE_COPY_SCENE_NPC_DIE: {0: "i"},        # npc id
+    ASK_COPYSCENES_INFO: {},
+    ENTER_NEW_MAP: {0: "s"},                    # map id
+    CHANGE_SCENE_LINE: {0: "i"},
+    REQUEST_LINE_STATE: {0: "s"},
+    ENTER_TELEPORT_POINT: {0: "i"},
+    GATHER_OTHER_PLAYER: {0: "s"},
+    UPDATE_PLAYER_MAP_INFO: {0: "s", 1: "i"},
+    # rank pvp (provisional)
+    REQUEST_RANDOM_RANK_PVP_OPPONENT: {},
+    RANK_PVP_PLAYER_ATTACK: {0: "i", 1: "i"},   # damage, opponent hp
+    RANK_PVP_OTHER_PLAYER_DIE: {},
+    REQUEST_RANK_PVP_DATA: {},
+    REQUEST_RANK_PVP_HISTORY: {},
+    TIANTI_REQ_WIN_COUNT_REWARDS: {},
+    # tower (provisional)
+    REQUEST_TOWER_COPY_INFO: {},
+    ENTER_TOWER_COPY_INFO: {},
+    CONTINUE_TOWER_COPY: {},
+    GRANT_TOWER_REWARD: {},
+    TOWER_RESET: {},
+    TOWER_WIPE_OUT: {},
+    # slot machine
+    REQUEST_SLOT_INFO: {},
+    SPIN_SLOT: {},
+    REQUEST_SLOT_SUM_REWARD: {},
+    REQUEST_SLOT_REWARD: {0: "i"},
+    # misc
+    TUTORIAL_FINISH: {},
+    UNLOCK_FUNCTION_COMPLETE: {0: "i"},
+    RE_NAME: {0: "s"},
+    CHANGE_SHOW_TYPE: {0: "i"},
+    IMPACT_NPC: {0: "i"},
+    START_DOWNLOAD: {},
+    DOWNLOAD_FINISH: {},
 }
 
 # Server->client response field specs (used by tests / client-side parsing).
@@ -505,6 +675,31 @@ RESPONSE_SPECS = {
     RET_SIGN_30_DAY: {0: "i", 1: "i"},
     RET_MOUNT_INFO: {0: "oa"},
     RET_BUY_CAR_SHOP: {0: "i"},
+    ENTER_COPY_SCENE: {0: "i"},
+    COPY_SCENE_RESULT: {0: "i", 1: "i", 2: "i"},
+    SYNC_COPYSCENES_INFO: {0: "oa"},
+    UPDATE_COPYSCENE_INFO: {0: "i", 1: "i"},
+    NEXT_WAVE: {0: "i"},
+    COUNT_DOWN: {0: "i"},
+    RET_REQUEST_RANDOM_RANK_PVP_OPPONENT: {0: "s", 1: "i", 2: "i"},
+    RET_REQUEST_TOP_RANK_PVP_LIST: {0: "oa"},
+    SYN_RANK_PVP_DATA: {0: "i", 1: "i", 2: "i"},
+    RANK_PVP_START: {0: "s", 1: "i", 2: "i"},
+    RANK_PVP_REWARD: {0: "i", 1: "i"},
+    TIANTTI_RESULT: {0: "i", 1: "i", 2: "i"},
+    RET_REQUEST_TOWER_COPY_INFO: {0: "i", 1: "i"},
+    RET_GRANT_TOWER_REWARD: {0: "i", 1: "i"},
+    RET_TOWER_RESET: {0: "i"},
+    RET_TOWER_WIPE_OUT: {0: "i"},
+    RET_SLOT_INFO: {0: "i", 1: "i"},
+    RET_SPIN_SLOT: {0: "ia", 1: "i"},
+    RET_SLOT_SUM_REWARD: {0: "i"},
+    UPDATE_LINE_STATE: {0: "ia"},
+    SYNC_COPYSCENES_INFO: {0: "oa"},
+    ENTER_NEW_MAP: {0: "i"},
+    CHANGE_SCENE_LINE: {0: "i"},
+    ENTER_TELEPORT_POINT: {0: "i"},
+    UPDATE_PLAYER_MAP_INFO: {0: "s", 1: "i"},
 }
 
 
@@ -532,6 +727,24 @@ RESPONSE_ALIASES = {
     SIGN_30_DAY: RET_SIGN_30_DAY,
     REQUEST_MOUNT_INFO: RET_MOUNT_INFO,
     BUY_CAR_SHOP: RET_BUY_CAR_SHOP,
+    REQUEST_RANK_PVP_DATA: SYN_RANK_PVP_DATA,
+    REQUEST_RANDOM_RANK_PVP_OPPONENT: RET_REQUEST_RANDOM_RANK_PVP_OPPONENT,
+    REQUEST_TOP_RANK_PVP_LIST: RET_REQUEST_TOP_RANK_PVP_LIST,
+    TIANTI_REQ_WIN_COUNT_REWARDS: TIANTTI_RESULT,
+    REQUEST_TOWER_COPY_INFO: RET_REQUEST_TOWER_COPY_INFO,
+    ENTER_TOWER_COPY_INFO: RET_REQUEST_TOWER_COPY_INFO,
+    GRANT_TOWER_REWARD: RET_GRANT_TOWER_REWARD,
+    TOWER_RESET: RET_TOWER_RESET,
+    TOWER_WIPE_OUT: RET_TOWER_WIPE_OUT,
+    REQUEST_SLOT_INFO: RET_SLOT_INFO,
+    SPIN_SLOT: RET_SPIN_SLOT,
+    REQUEST_SLOT_SUM_REWARD: RET_SLOT_SUM_REWARD,
+    REQUEST_LINE_STATE: UPDATE_LINE_STATE,
+    ASK_COPYSCENES_INFO: SYNC_COPYSCENES_INFO,
+    ENTER_NEW_MAP: ENTER_NEW_MAP,
+    LEAVE_COPY_SCENE: LEAVE_COPY_SCENE,
+    CHANGE_SCENE_LINE: CHANGE_SCENE_LINE,
+    ENTER_TELEPORT_POINT: ENTER_TELEPORT_POINT,
 }
 
 

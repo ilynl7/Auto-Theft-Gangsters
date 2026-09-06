@@ -107,6 +107,36 @@ Tags handled (see `server/protocol.py`):
 - **Cars/mounts**: `request_mount_info` (235) / `ret_mount_info` (630),
   `mount_equip` (236), `use_mount` (238) / `unuse_mount` (239) with AOI
   re-announce, car ownership persisted per character.
+- **Copy scenes (dungeons)**: `enter_copy_scene` (107) spawns per-wave NPCs
+  (`npc_create` 509) with a `count_down` (553) timer; kills are reported via
+  `single_copy_scene_npc_die` (127), cleared waves trigger `next_wave`
+  (515), and the final clear pays the dungeon reward through
+  `show_reward_items_tips` (638). `ask_copyscenes_info` (145) reports best
+  wave/done state; `leave_copy_scene` (108) abandons a run. Content lives in
+  `economy.COPY_SCENES`.
+- **Rank PvP (天梯 ladder)**: `request_random_rank_pvp_opponent` (133)
+  matches a synthetic opponent near the player's score and pushes
+  `rank_pvp_start` (547); the client's attacks are validated in
+  `rank_pvp_player_attack` (136) / `rank_pvp_other_player_die` (137) and the
+  result is pushed as `tiantti_result` (551) with `rank_pvp_reward` (545).
+  `syn_rank_pvp_data` (541) reports score/wins/battles, ladder history is
+  persisted, the top list is served via `request_top_rank_pvp_list`
+  (134/543), and cumulative win-count rewards via
+  `tianti_req_win_count_rewards` (157).
+- **Tower**: `request/enter_tower_copy_info` (202/204) report current floor,
+  `continue_tower_copy` (205) spawns a scaled floor NPC, per-floor rewards
+  via `grant_tower_reward` (203), `tower_reset` (230, diamond cost),
+  `tower_wipe_out` (208, instant clear). Content in `economy.TOWER`.
+- **Slot machine**: `request_slot_info` (242/633), `spin_slot` (243/634,
+  3 reels, pair/triple payouts), accumulating sum-reward pool claimable via
+  `request_slot_sum_reward` (244/635). Content in `economy.SLOT`.
+- **Maps/lines/teleports**: `enter_new_map` (106), `change_scene_line`
+  (155), `request_line_state` (219, answered with `update_line_state` 568
+  player counts per line), `enter_teleport_point` (251),
+  `update_player_map_info` (324).
+- **Client progress**: `tutorial_finish` (306), `unlock_function_complete`
+  (268), `re_name` (301), `change_show_type` (223), `impact_npc` (298),
+  `start_download` (269) / `download_finish` (270) no-ops.
 
 ### Economy content and provisional schemas
 
@@ -180,6 +210,14 @@ python3 -m pytest tests/ -q
   guilds (create/join/approve/donate/guild-shop/kick/search), friends
   (add/info/delete), mail (send/mailbox/collect/delete), sign-in rewards,
   skill level-up, and car purchase/use.
+- `tests/test_pvp_dungeons.py` — end-to-end coverage of the newer systems:
+  a full dungeon run (enter → countdown → wave npcs → next_wave → clear →
+  rewards → done state), unknown-copy rejection, the rank PvP ladder
+  (matchmaking → attacks → tiantti_result → rewards → data/history), the
+  tower (info → climb → rewards → wipe-out → reset), the slot machine
+  (info → spins → pool claim), map/line helpers (line state, line change,
+  map switch, teleport), and the misc progress tags (tutorial, unlock,
+  rename, show type, download no-ops).
 
 ## What works with a real client
 
@@ -192,9 +230,12 @@ python3 -m pytest tests/ -q
 
 Character persistence (position, level, exp, hp, name, car), currency
 (gold/diamond), backpack, storage, equipment slots, skills, missions, guild
-membership, friends and mail are stored in SQLite and restored on re-entry.
-Copy scenes/PvP arenas/tower/rankings and the remaining ~330 protocol tags
-are not yet implemented; unknown tags are logged, not crashed on.
+membership, friends, mail, ladder score/history and tower/slot progress are
+stored in SQLite and restored on re-entry.
+
+The remaining tags (dances, wild boss, survive, bar fight, escort, teams,
+VIP, videos/ads, retrieve-account and similar) are not yet implemented;
+unknown tags are logged, not crashed on.
 
 ## Wire protocol summary (recovered from Assembly-CSharp.dll)
 

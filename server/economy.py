@@ -169,3 +169,59 @@ CARS = {
     2: {"name": "Muscle Car", "speed": 18},
     3: {"name": "Sports Coupe", "speed": 24},
 }
+
+# --- copy scenes / dungeons -------------------------------------------------
+# Wave-based PvE instances entered from the open world (client flow:
+# enter_copy_scene -> npc_create per wave -> single_copy_scene_npc_die ->
+# next_wave -> copy_scene_result). The client drives combat; the server
+# validates reports and pays rewards on success.
+#
+# copy_id -> {"name", "waves": [[npc kind, ...], ...], "reward": {...},
+#             "countdown": seconds per wave}
+COPY_SCENES = {
+    1: {
+        "name": "Back Alley Brawl",
+        "waves": [[1, 1], [1, 1, 2]],
+        "countdown": 60,
+        "reward": {"gold": 1500, "diamond": 1, "items": {1: 2}, "exp": 120},
+    },
+    2: {
+        "name": "Docks Raid",
+        "waves": [[2, 1], [2, 2], [3]],
+        "countdown": 90,
+        "reward": {"gold": 5000, "diamond": 3, "items": {20: 1}, "exp": 400},
+    },
+}
+
+# --- tower (climb endless npc floors) ----------------------------------------
+# client flow: request_tower_copy_info -> enter_tower_copy_info ->
+# fight (single_copy_scene_npc_die) -> grant_tower_reward per floor block
+TOWER = {
+    "max_floor": 100,
+    "floors_per_reward_block": 5,
+    "gold_per_floor": 150,
+    "exp_per_floor": 60,
+    "reset_diamond_cost": 20,
+}
+
+# --- rank pvp (tianTi ladder) ------------------------------------------------
+# client flow: request_random_rank_pvp_opponent -> rank_pvp_start ->
+# simulated 1v1 resolved server-side from reported attacks
+# (rank_pvp_player_attack / rank_pvp_other_player_die) -> tiantti_result
+RANK_PVP = {
+    "base_score": 1000,
+    "win_score": 25,
+    "lose_score": -15,
+    "win_gold": 1200,
+    "win_diamond": 2,
+    "win_count_reward": 500,     # gold per 5 cumulative wins
+}
+
+# --- slot machine ------------------------------------------------------------
+# three reels of 0..5; three of a kind pays 10x, a pair pays 2x
+SLOT = {
+    "spin_cost": 100,
+    "reels": 6,
+    "triple_multiplier": 10,
+    "pair_multiplier": 2,
+}
