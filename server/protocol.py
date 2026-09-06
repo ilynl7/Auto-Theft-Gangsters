@@ -275,6 +275,37 @@ IMPACT_NPC = 298
 LOGIN_MAX_COUNT = 578
 RETRIEVE_ACCOUNT = 660
 
+# --- login-time info burst (client fires these right after login; each has
+# a dedicated ret tag — an unanswered request leaves a UI panel waiting) -----
+REQUEST_ACTIVITY_INFO = 225
+RET_REQUEST_ACTIVITY_INFO = 619
+REQUEST_DANCE_INFO = 227
+RET_REQUEST_DANCE_INFO = 623
+REQUEST_GUILD_BOSS = 195
+RET_REQUEST_GUILD_BOSS = 599
+REQUEST_SIGN_30_DAY_INFO = 252
+RET_REQUEST_30_DAY_INFO = 640
+REQUEST_SIGN_WEEK_INFO = 253
+RET_REQUEST_SIGN_WEEK_INFO = 641
+REQUEST_INVEST_PACK = 257
+RET_REQUEST_INVEST_PACK = 645
+REQUEST_DAILY_BUY = 258
+RET_REQUEST_DAILY_BUY = 646
+REQUEST_DAILY_ACTIVE = 261
+RET_REQUEST_DAILY_ACTIVE = 649
+REQUEST_RETRIEVE_INFO = 278
+RET_REQUEST_RETRIEVE_INFO = 658
+REQ_LEVEL_REWARD = 296
+RET_LEVEL_REWARD = 674
+REQUIRE_VIP_INFO = 299
+RET_REQUIRE_VIP_INFO = 678
+REQUEST_DOMIN_INFO = 310
+RET_DOMIN_INFO = 684
+REQUEST_DANCE_STATE_INFO = 313
+SYNC_DANCE_STATE_INFO = 686
+REQUEST_GUILD_MAP_INFO = 319
+RET_REQUEST_GUILD_MAP_INFO = 689
+
 TAG_NAMES = {
     VISITOR: "visitor",
     VERFIY: "verfiy",
@@ -486,6 +517,34 @@ TAG_NAMES = {
     RELIFE_PLAYER: "relife_player",
     LOGIN_MAX_COUNT: "login_max_count",
     RETRIEVE_ACCOUNT: "retrieve_account",
+    REQUEST_ACTIVITY_INFO: "request_activity_info",
+    RET_REQUEST_ACTIVITY_INFO: "ret_request_activity_info",
+    REQUEST_DANCE_INFO: "request_dance_info",
+    RET_REQUEST_DANCE_INFO: "ret_request_dance_info",
+    REQUEST_GUILD_BOSS: "request_guild_boss",
+    RET_REQUEST_GUILD_BOSS: "ret_request_guild_boss",
+    REQUEST_SIGN_30_DAY_INFO: "request_sign_30_day_info",
+    RET_REQUEST_30_DAY_INFO: "ret_request_30_day_info",
+    REQUEST_SIGN_WEEK_INFO: "request_sign_week_info",
+    RET_REQUEST_SIGN_WEEK_INFO: "ret_request_sign_week_info",
+    REQUEST_INVEST_PACK: "request_invest_pack",
+    RET_REQUEST_INVEST_PACK: "ret_request_invest_pack",
+    REQUEST_DAILY_BUY: "request_daily_buy",
+    RET_REQUEST_DAILY_BUY: "ret_request_daily_buy",
+    REQUEST_DAILY_ACTIVE: "request_daily_active",
+    RET_REQUEST_DAILY_ACTIVE: "ret_request_daily_active",
+    REQUEST_RETRIEVE_INFO: "request_retrieve_info",
+    RET_REQUEST_RETRIEVE_INFO: "ret_request_retrieve_info",
+    REQ_LEVEL_REWARD: "req_level_reward",
+    RET_LEVEL_REWARD: "ret_level_reward",
+    REQUIRE_VIP_INFO: "require_vip_info",
+    RET_REQUIRE_VIP_INFO: "ret_require_vip_info",
+    REQUEST_DOMIN_INFO: "request_domin_info",
+    RET_DOMIN_INFO: "ret_domin_info",
+    REQUEST_DANCE_STATE_INFO: "request_dance_state_info",
+    SYNC_DANCE_STATE_INFO: "sync_dance_state_info",
+    REQUEST_GUILD_MAP_INFO: "request_guild_map_info",
+    RET_REQUEST_GUILD_MAP_INFO: "ret_request_guild_map_info",
 }
 
 
@@ -787,6 +846,22 @@ RESPONSE_SPECS = {
     RET_GUILD_SCORE_INFO: {0: "i", 1: "i"},
     GUILD_BATTLE_START: {0: "i"},
     RET_GUILD_BATTLE_STATE: {0: "i"},
+    # login-time info burst — list/object payloads matching the client's
+    # SprotoType decode switch order (see handlers.h_info_burst)
+    RET_REQUEST_ACTIVITY_INFO: {0: "oa"},
+    RET_REQUEST_DANCE_INFO: {0: "oa"},
+    RET_REQUEST_GUILD_BOSS: {0: "i", 1: "i"},
+    RET_REQUEST_30_DAY_INFO: {0: "i"},
+    RET_REQUEST_SIGN_WEEK_INFO: {0: "i"},
+    RET_REQUEST_INVEST_PACK: {0: "oa"},
+    RET_REQUEST_DAILY_BUY: {0: "oa"},
+    RET_REQUEST_DAILY_ACTIVE: {0: "oa"},
+    RET_REQUEST_RETRIEVE_INFO: {0: "oa"},
+    RET_LEVEL_REWARD: {0: "oa"},
+    RET_REQUIRE_VIP_INFO: {0: "i", 1: "i"},
+    RET_DOMIN_INFO: {0: "i"},
+    SYNC_DANCE_STATE_INFO: {0: "oa"},
+    RET_REQUEST_GUILD_MAP_INFO: {0: "oa"},
 }
 
 
@@ -843,6 +918,20 @@ RESPONSE_ALIASES = {
     REQ_GUILD_SCORE_INFO: RET_GUILD_SCORE_INFO,
     REQ_GUILD_BATTLE_STATE: RET_GUILD_BATTLE_STATE,
     ENTER_GUILD_BATTLE: RET_ENTER_GUILD_BATTLE,
+    REQUEST_ACTIVITY_INFO: RET_REQUEST_ACTIVITY_INFO,
+    REQUEST_DANCE_INFO: RET_REQUEST_DANCE_INFO,
+    REQUEST_GUILD_BOSS: RET_REQUEST_GUILD_BOSS,
+    REQUEST_SIGN_30_DAY_INFO: RET_REQUEST_30_DAY_INFO,
+    REQUEST_SIGN_WEEK_INFO: RET_REQUEST_SIGN_WEEK_INFO,
+    REQUEST_INVEST_PACK: RET_REQUEST_INVEST_PACK,
+    REQUEST_DAILY_BUY: RET_REQUEST_DAILY_BUY,
+    REQUEST_DAILY_ACTIVE: RET_REQUEST_DAILY_ACTIVE,
+    REQUEST_RETRIEVE_INFO: RET_REQUEST_RETRIEVE_INFO,
+    REQ_LEVEL_REWARD: RET_LEVEL_REWARD,
+    REQUIRE_VIP_INFO: RET_REQUIRE_VIP_INFO,
+    REQUEST_DOMIN_INFO: RET_DOMIN_INFO,
+    REQUEST_DANCE_STATE_INFO: SYNC_DANCE_STATE_INFO,
+    REQUEST_GUILD_MAP_INFO: RET_REQUEST_GUILD_MAP_INFO,
 }
 
 

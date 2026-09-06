@@ -9,7 +9,6 @@ NPCs are server-simulated: they stand at their spawn point, take damage from
 player attacks, die, drop loot + exp + gold, and respawn after a delay.
 """
 
-import os
 import random
 
 from . import economy
@@ -199,37 +198,6 @@ PROFESSION_MODELS = {
     2: ("105", "NQS_A"),
 }
 
-# APK asset compatibility (see docs/protocol.md "Client asset availability").
-# The circulating v1.19 repack (research/apk/, sha256 eb6b452c...) ships only
-# TWO player model bundles: Bundle/Model/QJ_A/* and Bundle/Model/NQS_A/*. The
-# whole XD_A family (Batfighter model + parts + weapon) is missing — it was
-# hot-downloaded from the dead CDN. A character whose visual.ModeId resolves
-# to XD_A stalls the client's async bundle load forever: the loading bar
-# freezes at 90% (pre-spawn cap in LoadingUIRoot.Update) and the world never
-# becomes ready, with NO crash on the wire. adb logcat evidence:
-#   java.io.FileNotFoundException: JAR entry assets/Bundle/Model/XD_A... not
-#   found in base.apk   (and only baiRen_XD/heiRen_QJ/nvRen_QS animation
-#   bundles exist — exactly one race x class combo per profession).
-#
-# Workaround: remap such visuals to a model bundle the APK actually has
-# (QJ_A). Cosmetic only — general.profession / skills / weapon logic are
-# unaffected. Set ATG_COMPAT_MODELS=0 when serving the full asset set
-# (e.g. a repack with every Model bundle included).
-COMPAT_MODELS = {
-    # profession -> profession whose model bundle exists in the APK
-    0: 1,   # Batfighter -> render with the QJ_A (Boxer) model
-}
-try:
-    COMPAT_MODELS_ENABLED = os.environ.get("ATG_COMPAT_MODELS", "1") == "1"
-except Exception:  # pragma: no cover - env always exists in CPython
-    COMPAT_MODELS_ENABLED = True
-
-
-def _apc_visual_model(profession: int):
-    """(ModeId, base) for a profession, remapped when the APK lacks assets."""
-    if COMPAT_MODELS_ENABLED and profession in COMPAT_MODELS:
-        profession = COMPAT_MODELS[profession]
-    return PROFESSION_MODELS.get(profession, PROFESSION_MODELS[0])
 
 # Default movement speed the client derives as attribute_all.mov / 100.
 _DEFAULT_MOV = 500
@@ -244,7 +212,7 @@ def _general_blob(name: str, profession: int, line_index: int = 0,
 
 
 def _visual_blob(profession: int, name: str) -> bytes:
-    model_id, base = _apc_visual_model(profession)
+    model_id, base = PROFESSION_MODELS.get(profession, PROFESSION_MODELS[0])
     return P._enc.encode_object({
         0: name,
         1: model_id,          # ModeId -> CharacterModelData row

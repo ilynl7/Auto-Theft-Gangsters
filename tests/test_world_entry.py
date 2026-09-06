@@ -96,34 +96,79 @@ def test_character_blob_movement_at_wire_tag_7():
     assert pos in blob  # sanity: position bytes present
 
 
-def test_batfighter_visual_remapped_to_existing_model_bundle():
-    """Profession 0 (Batfighter) must render with a model the APK ships.
+def test_visual_uses_real_profession_models():
+    """visual.ModeId must use the REAL per-profession model rows.
 
-    The circulating v1.19 repack has no Bundle/Model/XD_A* bundles (they were
-    hot-downloaded from the dead CDN), so a character whose visual.ModeId
-    resolves to XD_A stalls the client's async bundle load forever: loading
-    window freezes at 90% with no crash. The server remaps Batfighter visuals
-    to QJ_A (Boxer) assets — cosmetic only.
+    A previous "fix" remapped Batfighter visuals to QJ_A believing the APK
+    lacked XD_A bundles — but the APK ships the full set (Bundle/Animation/
+    baiRen_XD.bundle exists and character select animates the Batfighter),
+    and the remap broke the Batfighter's idle animation. The wire blobs must
+    carry the real CharacterModelData row for each profession.
     """
     movement = P.encode_movement({"x": 1, "y": 0, "z": 2, "o": 0})
-    blob = encode_character_blob(9, "BatRemap", 1, movement, profession=0)
-    d = sproto.decode_typed(blob, CHARACTER_SPEC)
-    vis = sproto.decode_typed(sproto.as_bytes(d[6]), VISUAL_SPEC)
-    assert vis[1] == "104"               # QJ_A, not the missing XD_A "100"
-    # aoi blobs and overviews go through the same remap
-    aoi = encode_character_aoi_blob(9, "BatRemap", 1, movement, profession=0)
-    d2 = sproto.decode_typed(aoi, CHARACTER_AOI_SPEC)
-    vis2 = sproto.decode_typed(sproto.as_bytes(d2[1]), VISUAL_SPEC)
-    assert vis2[1] == "104"
-    ov = encode_character_overview(
-        {"id": 9, "name": "BatRemap", "level": 1, "sex": 0,
-         "profession": 0, "created_at": 0})
-    d3 = sproto.decode_typed(ov, OVERVIEW_SPEC)
-    vis3 = sproto.decode_typed(sproto.as_bytes(d3[3]), VISUAL_SPEC)
-    assert vis3[1] == "104"
-    # profession itself is untouched (general.profession stays 0)
-    gen = sproto.decode_typed(sproto.as_bytes(d[1]), GENERAL_SPEC)
-    assert gen[1] == 0
+    expected = {0: "100", 1: "104", 2: "105"}   # XD_A / QJ_A / NQS_A
+    for profession, mode_id in expected.items():
+        blob = encode_character_blob(9, "Model", 1, movement,
+                                     profession=profession)
+        d = sproto.decode_typed(blob, CHARACTER_SPEC)
+        vis = sproto.decode_typed(sproto.as_bytes(d[6]), VISUAL_SPEC)
+        assert vis[1] == mode_id
+        # aoi blobs and overviews use the same model
+        aoi = encode_character_aoi_blob(9, "Model", 1, movement,
+                                        profession=profession)
+        d2 = sproto.decode_typed(aoi, CHARACTER_AOI_SPEC)
+        vis2 = sproto.decode_typed(sproto.as_bytes(d2[1]), VISUAL_SPEC)
+        assert vis2[1] == mode_id
+        ov = encode_character_overview(
+            {"id": 9, "name": "Model", "level": 1, "sex": 0,
+             "profession": profession, "created_at": 0})
+        d3 = sproto.decode_typed(ov, OVERVIEW_SPEC)
+        vis3 = sproto.decode_typed(sproto.as_bytes(d3[3]), VISUAL_SPEC)
+        assert vis3[1] == mode_id
+
+
+@pytest.mark.asyncio
+async def test_login_info_burst_is_answered(server):
+    """The client fires request_activity_info(225) + friends right after
+    login; every one must get its dedicated ret_* response (possibly empty).
+
+    Previously the server dropped them ("unhandled protocol tag"), leaving
+    those UI panels waiting on a response forever.
+    """
+    srv, gate_port, game_port = server
+    c = await _connect(game_port)
+    resp = await c.rpc(P.VISITOR, {})
+    account_id = sproto.as_str(resp.body[0])
+    key = sproto.as_str(resp.body[1])
+    resp = await c.rpc(P.VERFIY, {0: account_id, 1: key, 2: "14119"})
+    session_id = resp.body[1]
+    await c.rpc(P.LOGIN, {0: session_id, 1: account_id, 2: 0,
+                          3: "1.012.017", 4: "Unity4.7", 5: 1, 6: 12345})
+
+    burst = {
+        225: 619,   # request_activity_info -> ret_request_activity_info
+        227: 623,   # dance
+        195: 599,   # guild boss
+        252: 640,   # sign 30-day info
+        253: 641,   # sign week info
+        257: 645,   # invest pack
+        258: 646,   # daily buy
+        261: 649,   # daily active
+        278: 658,   # retrieve info
+        296: 674,   # level reward
+        299: 678,   # vip info
+        310: 684,   # domin info
+        313: 686,   # dance state info -> sync_dance_state_info
+        319: 689,   # guild map info
+    }
+    for req_tag, ret_tag in burst.items():
+        resp = await c.rpc(req_tag, {})
+        assert resp is not None, f"tag {req_tag} must be answered"
+        assert resp.session is not None, \
+            f"tag {req_tag} must get an RPC response (session echo)"
+        # the ret_* tag must have a registered response schema
+        assert P.RESPONSE_ALIASES.get(req_tag) == ret_tag
+    await c.close()
 
 
 def test_character_aoi_blob_uses_aoi_tags():

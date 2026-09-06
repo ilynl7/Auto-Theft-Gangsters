@@ -168,11 +168,44 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             P.REQ_GUILD_BATTLE_RANK: self.h_req_guild_battle_rank,
             P.REQ_GUILD_SCORE_INFO: self.h_req_guild_score_info,
             P.ENTER_GUILD_BATTLE: self.h_enter_guild_battle,
+            # login-time info burst (client fires these right after login;
+            # unanswered ones leave the corresponding UI panel waiting forever)
+            P.REQUEST_ACTIVITY_INFO: self.h_info_burst,
+            P.REQUEST_DANCE_INFO: self.h_info_burst,
+            P.REQUEST_GUILD_BOSS: self.h_info_burst,
+            P.REQUEST_SIGN_30_DAY_INFO: self.h_info_burst,
+            P.REQUEST_SIGN_WEEK_INFO: self.h_info_burst,
+            P.REQUEST_INVEST_PACK: self.h_info_burst,
+            P.REQUEST_DAILY_BUY: self.h_info_burst,
+            P.REQUEST_DAILY_ACTIVE: self.h_info_burst,
+            P.REQUEST_RETRIEVE_INFO: self.h_info_burst,
+            P.REQ_LEVEL_REWARD: self.h_info_burst,
+            P.REQUIRE_VIP_INFO: self.h_info_burst,
+            P.REQUEST_DOMIN_INFO: self.h_info_burst,
+            P.REQUEST_DANCE_STATE_INFO: self.h_info_burst,
+            P.REQUEST_GUILD_MAP_INFO: self.h_info_burst,
         }
 
     # ------------------------------------------------------------------
     # gate (login server, port 9777)
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # login-time info burst: activity / sign-in / dance / vip / daily etc.
+    # Each request gets its dedicated ret_* response with an EMPTY or
+    # minimal body — the client treats an absent list as "no entries".
+    # Schemas recovered from Assembly-CSharp.dll (dnfile field order):
+    #   activity_info  ID/CurNum/Type/State/Parm/Parmstr/sign/time/next
+    #   dance_info     ID/enable/useType/endTime
+    #   dance_state_info uuid/ID/start_time/end_time/state/parm/duration/
+    #                  reset_time/parm2
+    #   daily_active   ID/count/Type   daily_buy ID/state  invest_pack ID/state
+    #   level_reward   ID/state        retrieve_info ID/state/count
+    #   guild_boss     id/state/time/curNum/sort_item
+    #   guild_map_info id/guildId/guildName/guildIcon/requireState/state
+    # ------------------------------------------------------------------
+    async def h_info_burst(self, s: Session, msg) -> None:
+        s.respond(msg, {})
+
     async def h_update_game_server(self, s: Session, msg) -> None:
         servers = [P.encode_game_server(
             server_id=config.SERVER_ID,
