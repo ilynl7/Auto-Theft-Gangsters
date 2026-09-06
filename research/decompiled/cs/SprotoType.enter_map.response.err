@@ -1,0 +1,12 @@
+Could not find a type named 'SprotoType.enter_map.response'.
+Did you mean one of the following?
+    AccountVersionCheckRootLogic+<FacebookLinkResponse>c__AnonStoreyC3
+    AccountVersionCheckRootLogic+<OnVerifyResponse>c__AnonStoreyC1
+    NetManager+<LoginResponse>c__AnonStorey46
+    SprotoType.ask_character_info+response
+    SprotoType.ask_confirm+response
+    SprotoType.badge_merge+response
+    SprotoType.character_create+response
+    SprotoType.character_list+response
+    SprotoType.character_pick+response
+    SprotoType.equip_inhert+response

@@ -1,0 +1,11 @@
+Could not find a type named 'Sproto.Package'.
+Did you mean one of the following?
+    BigPackageData
+    BigPackageTimeListData
+    LevelPackageData
+    Protocol+open_item_package
+    Protocol+ret_open_item_package
+    ret_open_item_package_handler
+    SprotoType.open_item_package
+    SprotoType.Package
+    SprotoType.ret_open_item_package
