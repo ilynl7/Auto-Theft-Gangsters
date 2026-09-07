@@ -999,10 +999,12 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         attack = self._player_attack_power(wp.char_id)
         damage = attack + skill["damage"]
         npc.hp = max(0, npc.hp - damage)
-        # damage popup to everyone on the map
+        # damage popup to everyone on the map — show_damage_board carries
+        # an object array of acceptdamge at tag 0 (client: request.damges)
         self.server.world.broadcast(
             wp.map_id, P.SHOW_DAMAGE_BOARD,
-            {0: npc_id, 1: damage, 2: wp.char_id})
+            {0: P.encode_damage_board([P.encode_acceptdamge(
+                npc_id, damage, str(skill_id))])})
         if npc.hp > 0:
             s.respond(msg, {0: 0})
             # the NPC fights back
@@ -1011,25 +1013,45 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             hp = db.set_hp(wp.char_id, hp - counter)
             self.server.world.broadcast(
                 wp.map_id, P.ACCEPT_DAMGE,
-                {0: npc_id, 1: counter, 2: wp.char_id})
+                {0: P.encode_damage_board([P.encode_acceptdamge(
+                    wp.char_id, counter)])})
             if hp <= 0:
                 wp.dead = True
+                # notice_relife_player: type(0) int, cost(1) int,
+                # itemId(2) STRING, characterid(3) int, name(4) STRING.
+                # The client dereferences GetItemDataByID(itemId).BackPackIcon,
+                # so a valid (string) item id is mandatory — the revive
+                # potion row from ItemData.
                 self.server.world.broadcast(
-                    wp.map_id, P.NOTICE_RELIFE_PLAYER, {0: wp.char_id})
+                    wp.map_id, P.NOTICE_RELIFE_PLAYER,
+                    {0: 1, 1: 0, 2: "9011", 3: wp.char_id, 4: wp.name})
             return
         # --- npc died ---
         exp, gold, drops = self.server.world.kill_npc(npc, wp.char_id, wp.name)
+        # local_npc_die.npcid is a STRING on the client (read_string) — send
+        # the npc's NpcData row id, which is also what FindObjInScene keys on
+        # via ObjInitNpcData (mServerID is the int id; the death lookup uses
+        # the row id, matching what npc_create carried).
         self.server.world.broadcast(
-            wp.map_id, P.LOCAL_NPC_DIE, {0: npc_id})
+            wp.map_id, P.LOCAL_NPC_DIE,
+            {0: economy.NPC_KINDS[npc.kind]["npcdataid"], 3: 0})
         s.respond(msg, {0: 0})
         for item_id, cnt in drops.items():
             db.add_item(wp.char_id, item_id, cnt)
             self.server.world.broadcast(
-                wp.map_id, P.DROP_ITEM_INFO, {0: item_id, 1: cnt, 2: wp.char_id})
+                wp.map_id, P.DROP_ITEM_INFO,
+                {0: P.encode_drop_item_info(npc_id, item_id, cnt,
+                                            npc.pos["x"], npc.pos["z"])})
         if gold:
             db.add_currency(wp.char_id, economy.CURRENCY_GOLD, gold)
         level, exp_left = db.add_exp(wp.char_id, exp)
-        s.push(P.SYNC_COMMON_DATA, {0: level, 1: exp_left, 2: gold, 3: exp})
+        gold_total = db.get_currency(wp.char_id, economy.CURRENCY_GOLD)
+        hp, max_hp = db.get_hp(wp.char_id)
+        # aoi_update_attribute is the client's real exp/level/hp/money sync
+        # (ExpLineRootLogic.UpdateExp); sync_common_data is serverTime state
+        # and must NOT carry level/exp.
+        s.push(P.AOI_UPDATE_ATTRIBUTE, {0: P.encode_aoi_update_attribute(
+            wp.char_id, hp, exp_left, level, max_hp, gold_total)})
         self._sync_backpack(s, wp.char_id)
         log.info("char %d killed npc %d (exp +%d gold +%d)", wp.char_id,
                  npc_id, exp, gold)
@@ -1042,9 +1064,12 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         wp = s.world_player
         if wp is None:
             return
-        # accept_damge {attacker(0), damage(1), hp(2)} — mirror to the map
-        self.server.world.broadcast(wp.map_id, P.ACCEPT_DAMGE,
-                                    dict(msg.body), exclude=None)
+        # accept_damge body is SprotoType.accept_damge.request: damges(0) is
+        # an OBJECT ARRAY of acceptdamge — mirror it to the map verbatim.
+        self.server.world.broadcast(
+            wp.map_id, P.ACCEPT_DAMGE,
+            {0: sproto.encode_object_array(msg.body.get(0) or [])},
+            exclude=None)
         s.respond(msg, {})
 
     async def h_relife_player(self, s: Session, msg) -> None:

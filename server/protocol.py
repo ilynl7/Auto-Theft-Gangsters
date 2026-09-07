@@ -660,7 +660,7 @@ REQUEST_SPECS = {
     REQUEST_RANDOM_NAME: {0: "i"},  # sex
     CHANGE_ITEM_STATE: {0: "i", 1: "i"},
     SKILL_USE: {0: "i", 1: "i"},   # skill id, target id
-    ACCEPT_DAMGE: {0: "i", 1: "i", 2: "i"},  # attacker, damage, hp left
+    ACCEPT_DAMGE: {0: "oa"},   # damges: object array of acceptdamge
     LOCAL_NPC_DIE: {0: "i"},       # npc id
     ATTACK_LOCAL_NPC: {0: "i", 1: "i"},      # npc id, skill id
     RELIFE_PLAYER: {},
@@ -776,8 +776,9 @@ RESPONSE_SPECS = {
     # sync_skill_info: the client reads tag 0 as map<string, skill_info> —
     # an OBJECT ARRAY of skill_info blobs (key taken from v.skillId)
     SYNC_SKILL_INFO: {0: "oa"},
-    SHOW_DAMAGE_BOARD: {0: "i", 1: "i", 2: "i"},
-    DROP_ITEM_INFO: {0: "i", 1: "i", 2: "i"},
+    SHOW_DAMAGE_BOARD: {0: "oa"},  # damges: object array of acceptdamge
+    DROP_ITEM_INFO: {0: "i", 1: "i", 2: "i", 3: "i", 4: "o", 7: "i"},
+    AOI_UPDATE_ATTRIBUTE: {0: "o"},  # character_aoi_attribute blob
     SYNC_COMMON_DATA: {0: "i", 1: "i", 2: "i", 3: "i"},
     RET_GUILD_CREATE: {0: "i", 1: "i"},
     RET_GUILD_JOIN: {0: "i", 1: "i"},
@@ -1013,6 +1014,53 @@ def encode_item_stack(item_id: int, count: int) -> bytes:
     return _enc.encode_object({0: item_id, 1: count})
 
 
+def encode_acceptdamge(obj_id: int, damage: int, skill_id: str = "1",
+                       cri: bool = False) -> bytes:
+    """SprotoType.acceptdamge element (show_damage_board / accept_damge):
+    {id(0) int, damage(1) int, skillId(2) STRING, effinfoId(3) STRING,
+    cri(4) bool, parm..(5-8)}. The client's handlers read request.damges as
+    an OBJECT ARRAY at tag 0 — sending bare ints there decodes them as
+    garbage objects and crashes the damage-board loop.
+    """
+    return _enc.encode_object({
+        0: obj_id, 1: damage, 2: str(skill_id), 4: 1 if cri else 0,
+    })
+
+
+def encode_damage_board(entries: list) -> bytes:
+    """Object-array element blob for show_damage_board / accept_damge.
+    The push body is SprotoType.show_damage_board.request whose tag 0
+    (damges) is an OBJECT ARRAY of acceptdamge elements — i.e. the body
+    dict must be {0: <array blob>} and the array blob is just the
+    concatenated (u32 len + object stream) elements, exactly like
+    sproto.encode_object_array. The client's show_damage_board_handler
+    reads request.damges (tag 0) and iterates the acceptdamge objects.
+    """
+    return _enc.encode_object_array(entries)
+
+
+def encode_drop_item_info(server_id: int, item_id: int, count: int,
+                          pos_x: int, pos_z: int) -> bytes:
+    """SprotoType.drop_item_info: {serverId(0) int, pos_x(1) int,
+    pos_z(2) int, type(3) int, item(4): SprotoType.item object,
+    ownServerId(7) int}. SprotoType.item: {itemId(0) STRING, itemCount(1),
+    quality(3), id(4) STRING, count2(5)} — itemId must be the REAL ItemData
+    row id as a string, or GetItemDataByID returns null and the client
+    crashes (drop_item_info_handler dereferences itemDataByID.Type).
+    """
+    item = _enc.encode_object({
+        0: str(item_id), 1: count,
+    })
+    return _enc.encode_object({
+        0: server_id,
+        1: int(pos_x * 100),
+        2: int(pos_z * 100),
+        3: 0,                 # type
+        4: item,
+        7: server_id,         # ownServerId
+    })
+
+
 def encode_shop_good(goods_id: int, item_id: int, count: int,
                      currency: int, price: int) -> bytes:
     """ret_ask_shop_list element: {goods_id(0), item_id(1), count(2),
@@ -1039,16 +1087,82 @@ def encode_character_aoi_move(char_id: int, movement: bytes,
     return _enc.encode_object({0: char_id, 1: movement, 2: walk})
 
 
-# --- npc / combat wire objects (provisional schemas) ------------------------
+# --- npc / combat wire objects ----------------------------------------------
 
 def encode_npc(npc_id: int, kind: int, level: int, hp: int, max_hp: int,
                pos: dict) -> bytes:
-    """npc_create / aoi element: {npc_id(0), kind(1), level(2), hp(3),
-    max_hp(4), pos(5: position object)}."""
+    """SprotoType.npc_attribute — the REAL client schema (decode() switch).
+
+    npc_create_handler -> ObjInitNpcData.InitData(npc_attribute):
+        id(0) int          -> mServerID
+        npcdataid(1) STRING-> DataManager.GetNpcDataByID(...) — MUST be a
+                             real NpcData row id from the APK's Data.bundle
+                             (e.g. "21131" RepairMan Lv.1), otherwise the
+                             lookup returns null and the client crashes,
+                             freezing the loading window at 90%.
+        hp(2) max_hp(3) atk(4) def(5) hit(6) eva(7) cri(8) exd(9) exr(10)
+        res(11) crd(12) crr(13) defa(14) — plain integers
+        x(15) z(16) o(17)  — position as SEPARATE integers (x*100, z*100,
+                             o*100 in client units), NOT a nested object.
+        level(18) anti_stun(19) anti_knock_down(20) player_name(21 STRING)
+        guildId(22) teamid(23) dgea(24) resa(25) hita(26) cria(27)
+
+    NOTE: the client does NOT send a max_hp in npc_attribute — it takes
+    MaxHP from the NpcData row; we still send it at tag 3 (max_hp) since
+    InitData reads npc_attribute.max_hp directly.
+    """
+    from . import economy
+    kind_def = economy.NPC_KINDS.get(kind, {})
+    npcdataid = kind_def.get("npcdataid", "21131")
+    atk = kind_def.get("atk", 20)
     return _enc.encode_object({
-        0: npc_id, 1: kind, 2: level, 3: hp, 4: max_hp,
-        5: encode_position(**pos),
+        0: npc_id,
+        1: npcdataid,          # STRING — read_string on the client
+        2: hp,
+        3: max_hp,
+        4: atk,
+        5: kind_def.get("def", 100),
+        6: 10,                 # hit
+        7: 5,                  # eva
+        8: 0,                  # cri
+        9: 0, 10: 0,           # exd / exr
+        11: 0, 12: 0, 13: 0,   # res / crd / crr
+        14: 0,                 # defa
+        15: int(pos.get("x", 0) * 100),
+        16: int(pos.get("z", 0) * 100),
+        17: int(pos.get("o", 0) * 100),
+        18: level,
+        19: 0, 20: 0,          # anti_stun / anti_knock_down
+        21: kind_def.get("name", "NPC"),  # player_name STRING
     })
+
+
+def encode_aoi_update_attribute(char_id: int, hp: int, exp: int,
+                                level: int, max_hp: int, gold: int = 0,
+                                diamond: int = 0) -> bytes:
+    """SprotoType.aoi_update_attribute.request {character(0)} where character
+    is a character_aoi_attribute blob: id(0) attribute_other(1) attribute(2)
+    attribute_all(3) visual(4) property(5). aoi_update_attribute_handler on
+    the client applies MaxHP/HP/level/exp (UpdateExp) and money for the main
+    player — this is the real post-kill attribute sync (NOT sync_common_data,
+    whose tag 0 is serverTime on the client!).
+    """
+    attribute = _enc.encode_object({
+        0: max_hp,            # max_hp
+        1: exp,               # exp
+        2: 20,                # atk
+        3: 100,               # def
+    })
+    attribute_other = _enc.encode_object({
+        0: hp, 1: exp, 2: level,
+    })
+    character = _enc.encode_object({
+        0: char_id,
+        1: attribute_other,
+        2: attribute,
+        5: _enc.encode_object({13: gold, 14: diamond}),  # property money1/2
+    })
+    return _enc.encode_object({0: character})
 
 
 def encode_npc_create(npc) -> bytes:

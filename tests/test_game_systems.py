@@ -60,14 +60,22 @@ async def test_npcs_are_created_on_map_entry(server):
         for payload in c.decoder.feed(data):
             frame = P.parse_frame(payload, response=True)
             if frame.type == P.NPC_CREATE:
+                # client's real SprotoType.npc_attribute:
+                # id(0) int, npcdataid(1) STRING, hp(2), max_hp(3),
+                # atk(4), ..., x(15), z(16), o(17), level(18)
                 npc_frames.append(sproto.decode_typed(
                     sproto.as_bytes(frame.body[0]),
-                    {0: "i", 1: "i", 2: "i", 3: "i", 4: "i", 5: "o"}))
+                    {0: "i", 1: "s", 2: "i", 3: "i", 4: "i", 5: "i",
+                     15: "i", 16: "i", 17: "i", 18: "i"}))
         if len(npc_frames) >= len(economy.NPC_SPAWNS[economy.MAIN_CITY_MAP]):
             break
     assert len(npc_frames) == len(economy.NPC_SPAWNS[economy.MAIN_CITY_MAP]), \
         "all map NPCs pushed"
-    assert {n[1] for n in npc_frames} == {1, 2, 3}
+    # npcdataid must be a real NpcData row id (string) — an unknown id makes
+    # the client's GetNpcDataByID return null and crash the loading screen
+    real_rows = {k["npcdataid"] for k in economy.NPC_KINDS.values()}
+    assert {n[1] for n in npc_frames} == real_rows
+    assert all(isinstance(n[1], str) and n[1].isdigit() for n in npc_frames)
     await c.close()
 
 

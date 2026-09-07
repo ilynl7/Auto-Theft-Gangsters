@@ -25,6 +25,7 @@ async def test_wild_boss_info_and_enter(server):
     c, char_id = await login_and_pick(game_port, "BossHunter")
 
     kind_def = economy.NPC_KINDS[economy.WILD_BOSS["kind"]]
+    boss_npcdataid = kind_def["npcdataid"]
 
     resp = await c.rpc(P.REQUEST_WILD_BOSS_INFO, {})
     assert sproto.as_str(resp.body[0]) == kind_def["name"]
@@ -41,14 +42,14 @@ async def test_wild_boss_info_and_enter(server):
     deadline = asyncio.get_event_loop().time() + 3.0
     while npc is not None:
         blob = sproto.decode_typed(sproto.as_bytes(npc.body[0]),
-                                   {0: "i", 1: "i", 2: "i", 3: "i", 4: "i",
-                                    5: "o"})
-        if blob[1] == boss_kind:
+                                   {0: "i", 1: "s", 2: "i", 3: "i", 4: "i",
+                                    15: "i", 16: "i", 17: "i", 18: "i"})
+        if blob[1] == boss_npcdataid:
             break
         npc = await c.next_push(P.NPC_CREATE, timeout=1.0) if \
             asyncio.get_event_loop().time() < deadline else None
-    assert blob[1] == boss_kind
-    assert blob[4] == kind_def["max_hp"]
+    assert blob[1] == boss_npcdataid
+    assert blob[3] == kind_def["max_hp"]
     cd = await c.next_push(P.COUNT_DOWN)
     assert cd is not None and cd.body[0] == economy.WILD_BOSS["countdown"]
 

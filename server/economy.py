@@ -192,13 +192,27 @@ SKILL_LEVELUP_COST = 1000       # gold per skill level
 
 # NPC kinds per map: kind -> (name, level, max_hp, damage, exp, loot table)
 # loot: {item_id: (drop chance 0..1, count)}
+#
+# npcdataid/atk/def are REAL NpcData rows recovered from the APK's
+# Data.bundle (server/game_data.py-style extraction): the client's
+# npc_create_handler -> ObjInitNpcData.InitData hard-looks-up
+# DataManager.GetNpcDataByID(npc_attribute.npcdataid) — an id that is not in
+# the client's NpcData table returns null and crashes the client (loading
+# window freezes at 90%). Rows used (NpcData CSV):
+#   21131 RepairMan  Lv.1 Atk 20 Hp 2800 Def 100  (model NPC_Nan_009)
+#   21132 Horro      Lv.2 Atk 25 Hp 3640 Def 110  (model NPC_Nan_006)
+#   21133 Punk       Lv.3 Atk 30 Hp 4480 Def 120  (model NPC_Nan_015)
+#   61101 Office lady Lv.6 Atk 90 Hp 2500 Def 150 (model NPC_Nv_002)  (boss)
 NPC_KINDS = {
-    1: {"name": "Street Thug", "level": 1, "max_hp": 60, "damage": 6,
-        "exp": 40, "gold": 80, "loot": {1: (0.5, 1), 2: (0.4, 2)}},
-    2: {"name": "Gang Enforcer", "level": 3, "max_hp": 120, "damage": 12,
-        "exp": 90, "gold": 200, "loot": {10: (0.15, 1), 1: (0.6, 2)}},
-    3: {"name": "Mob Boss", "level": 6, "max_hp": 300, "damage": 25,
-        "exp": 300, "gold": 800, "loot": {11: (0.08, 1), 20: (0.2, 1)}},
+    1: {"name": "RepairMan", "npcdataid": "21131", "level": 1, "max_hp": 60,
+        "damage": 6, "exp": 40, "gold": 80,
+        "loot": {1: (0.5, 1), 2: (0.4, 2)}},
+    2: {"name": "Horro", "npcdataid": "21132", "level": 2, "max_hp": 120,
+        "damage": 12, "exp": 90, "gold": 200,
+        "loot": {10: (0.15, 1), 1: (0.6, 2)}},
+    3: {"name": "Punk", "npcdataid": "21133", "level": 3, "max_hp": 300,
+        "damage": 25, "exp": 300, "gold": 800,
+        "loot": {11: (0.08, 1), 20: (0.2, 1)}},
 }
 
 # The main open-world map the client loads after character pick.

@@ -106,8 +106,10 @@ class PvpHandlersMixin:
                         kind_def.get("gold", 80) // 2)
         exp = kind_def.get("exp", 40) // 2
         level, exp_left = db.add_exp(char_id, exp)
+        hp, max_hp = db.get_hp(char_id)
         s.respond(msg, {0: 0})
-        s.push(P.SYNC_COMMON_DATA, {0: level, 1: exp_left, 2: 0, 3: exp})
+        s.push(P.AOI_UPDATE_ATTRIBUTE, {0: P.encode_aoi_update_attribute(
+            char_id, hp, exp_left, level, max_hp)})
         self._sync_backpack(s, char_id)
         # wave cleared -> push the next one (or finish)
         if not state["npc_ids"]:
