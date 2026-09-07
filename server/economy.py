@@ -12,6 +12,15 @@ from .game_data import PROFESSIONS
 from .game_data import SKILLS as REAL_SKILLS
 from .game_data import WEAPONS as REAL_WEAPONS
 
+# The main open-world map the client loads after character pick.
+#
+# CRITICAL: map ids must match the client's MapInfoData table (recovered from
+# the APK's Data.bundle). In that table map 1's scene name is literally
+# "LoadingScene" — entering map 1 makes LoadingWindow.LoadScene load the
+# loading screen as the game map, so the loading window never finishes.
+# The main city (scene DSJ_GTA) is map id 11.
+MAIN_CITY_MAP = "11"
+
 # --- items -----------------------------------------------------------------
 # item_id -> {"name", "type", "slot", "price"(gold), "power"}
 # type: "consumable" | "equipment" | "badge" | "fashion" | "package"
@@ -160,7 +169,7 @@ MISSIONS = {
     2001: {
         "name": "Courier Run",
         "type": "visit",
-        "map_id": "1",
+        "map_id": MAIN_CITY_MAP,
         "count": 1,
         "reward": {"gold": 800, "diamond": 1, "items": {1: 3}},
         "next": None,
@@ -192,10 +201,11 @@ NPC_KINDS = {
         "exp": 300, "gold": 800, "loot": {11: (0.08, 1), 20: (0.2, 1)}},
 }
 
+# The main open-world map the client loads after character pick.
 # npc spawn tables: map_id -> [(kind, x, y, z)]
 NPC_SPAWNS = {
-    "1": [(1, 300, 0, 300), (1, 320, 0, 310), (2, 500, 0, 500),
-          (3, 900, 0, 900)],
+    MAIN_CITY_MAP: [(1, 300, 0, 300), (1, 320, 0, 310), (2, 500, 0, 500),
+                    (3, 900, 0, 900)],
 }
 
 # player base combat values (a weapon's `power` is added to attack)

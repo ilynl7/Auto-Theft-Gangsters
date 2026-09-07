@@ -135,7 +135,9 @@ class Client:
 
 
 GAME_SERVER_SPEC = {0: "i", 1: "s", 2: "s", 3: "i", 4: "i"}
-CHAR_OVERVIEW_SPEC = {0: "i", 1: "s", 2: "i", 3: "i"}
+# character_overview: {id(0), general(1), attribute_other(2), visual(3),
+# createtime(4), forbidden(5)}
+CHAR_OVERVIEW_SPEC = {0: "i", 1: "o", 2: "o", 3: "o", 4: "i", 5: "i"}
 
 
 @pytest_asyncio.fixture
@@ -276,14 +278,18 @@ async def test_full_login_flow(server):
     char_overview = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
                                         CHAR_OVERVIEW_SPEC)
     char_id = char_overview[0]
-    assert char_overview[1] == "TestGangster"
+    # general(1) carries the name at tag 0
+    general = sproto.decode_fields(sproto.as_bytes(char_overview[1]))
+    assert general[0] == "TestGangster"
 
     # --- pick the character ---
+    # success reply carries an EMPTY body: PickResponse treats any body with
+    # an errno field (even 0) as failure + disconnect
     resp = await g.rpc(P.CHARACTER_PICK, {0: char_id})
-    assert resp.body[0] == 0
+    assert resp.body == {}
 
     # --- enter map ---
-    resp = await g.rpc(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})
+    resp = await g.rpc(P.ENTER_MAP, {0: "11", 1: 0, 2: 1})
     assert 0 in resp.body  # main_player_create blob
     mp = sproto.decode_fields(sproto.as_bytes(resp.body[0]))
     own_char = sproto.decode_fields(sproto.as_bytes(mp[0]))
@@ -302,7 +308,7 @@ async def test_full_login_flow(server):
     char_id2 = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
                                    CHAR_OVERVIEW_SPEC)[0]
     await g2.rpc(P.CHARACTER_PICK, {0: char_id2})
-    await g2.rpc(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})
+    await g2.rpc(P.ENTER_MAP, {0: "11", 1: 0, 2: 1})
 
     pos = sproto.encode_object({0: 100, 1: 0, 2: 200, 3: 90})
     await g2.send_request(P.MOVE, {0: pos, 1: 1, 2: 1, 3: 0})
@@ -388,7 +394,7 @@ async def test_real_client_world_entry_flow(server):
     await c.rpc(P.CHARACTER_PICK, {0: char_id})
     em = await c.next_push(P.ENTER_MAP, timeout=3)
     assert em is not None, "server must push enter_map after pick"
-    assert sproto.as_str(em.body[0]) == "1"
+    assert sproto.as_str(em.body[0]) == "11"
     assert em.body[1] == 0 and em.body[2] == 1
 
     # client answers with map_ready, then receives the world

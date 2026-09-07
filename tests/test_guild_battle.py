@@ -5,6 +5,7 @@ weapon classes/tiers (EquipData)."""
 import asyncio
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -97,9 +98,12 @@ async def test_guild_battle_full_flow(server):
     assert resp.body[1] > 0
     assert resp.body[2] == game_data.GUILD_BATTLE["duration"]
     assert resp.body[3] == game_data.GUILD_BATTLE["max_members"]
-    # state outside the weekly window is idle
+    # state outside the weekly window is idle (window-aware: when the test
+    # runs during a real round the state is legitimately 1)
+    from server.handlers_guild_battle import _current_round
     resp = await a.rpc(P.REQ_GUILD_BATTLE_STATE, {})
-    assert resp.body[0] == 0
+    expected = 1 if _current_round(int(time.time())) >= 0 else 0
+    assert resp.body[0] == expected
     # betting gold bars on RedGang
     srv.db.add_currency(a_id, economy.CURRENCY_GOLD, 500)
     resp = await a.rpc(P.GUILD_BATTLE_GUESS, {0: "RedGang", 1: 200})
@@ -114,9 +118,12 @@ async def test_guild_battle_full_flow(server):
     # score info before entering
     resp = await a.rpc(P.REQ_GUILD_SCORE_INFO, {})
     assert resp.body[0] == 0
-    # entering outside the battle window is rejected
+    # entering outside the battle window is rejected (state 2); inside the
+    # window the enter succeeds (0)
+    from server.handlers_guild_battle import _current_round
     resp = await a.rpc(P.ENTER_GUILD_BATTLE, {})
-    assert resp.body[0] == 2
+    expected = 0 if _current_round(int(time.time())) >= 0 else 2
+    assert resp.body[0] == expected
     await a.close()
     await b.close()
 
@@ -168,8 +175,9 @@ async def _create_char_with_profession(game_port, name, profession):
     general = sproto.encode_object({0: name, 1: profession, 2: 0})
     resp = await c.rpc(P.CHARACTER_CREATE, {0: general})
     char_id = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
-                                  {0: "i", 1: "s", 2: "i", 3: "i"})[0]
+                                  {0: "i", 1: "o", 2: "o", 3: "o",
+                                   4: "i", 5: "i"})[0]
     await c.rpc(P.CHARACTER_PICK, {0: char_id})
-    await c.rpc(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})
+    await c.rpc(P.ENTER_MAP, {0: "11", 1: 0, 2: 1})
     await c.drain(0.4)
     return c

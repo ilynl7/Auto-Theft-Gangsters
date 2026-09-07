@@ -184,7 +184,7 @@ class PvpHandlersMixin:
         if wp is None or row is None:
             s.respond(msg, {0: 1})
             return
-        map_id = str(msg.body.get(0, "1"))
+        map_id = str(msg.body.get(0, economy.MAIN_CITY_MAP))
         old_map = wp.map_id
         self.server.world.leave(wp)
         wp.map_id = map_id
@@ -223,7 +223,7 @@ class PvpHandlersMixin:
 
     async def h_request_line_state(self, s: Session, msg) -> None:
         """update_line_state: player counts per line of the requested map."""
-        map_id = str(msg.body.get(0, "1"))
+        map_id = str(msg.body.get(0, economy.MAIN_CITY_MAP))
         counts = [0, 0, 0]
         for p in self.server.world.maps.get(map_id, {}).values():
             idx = p.line_index if p.line_index < 3 else 2
@@ -239,7 +239,7 @@ class PvpHandlersMixin:
             return
         old_map = wp.map_id
         self.server.world.leave(wp)
-        wp.map_id = "1"
+        wp.map_id = economy.MAIN_CITY_MAP
         self.server.db.save_position(row["id"], "1", 0, 0, 0, 0)
         self.server.world.join(wp)
         s.respond(msg, {0: 0})
@@ -257,7 +257,7 @@ class PvpHandlersMixin:
         if row is None:
             s.respond(msg, {0: 1})
             return
-        map_id = str(msg.body.get(0, "1"))
+        map_id = str(msg.body.get(0, economy.MAIN_CITY_MAP))
         line = msg.body.get(1, 0)
         s.respond(msg, {0: map_id, 1: line})
 

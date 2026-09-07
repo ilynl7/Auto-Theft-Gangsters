@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS characters (
     car_id      INTEGER,
     using_car   INTEGER NOT NULL DEFAULT 0,
     diamond     INTEGER NOT NULL DEFAULT 20,
-    map_id      TEXT NOT NULL DEFAULT '1',
+    -- map 1 is the client's LoadingScene placeholder; the real main city is 11
+    map_id      TEXT NOT NULL DEFAULT '11',
     pos_x       INTEGER NOT NULL DEFAULT 0,
     pos_y       INTEGER NOT NULL DEFAULT 0,
     pos_z       INTEGER NOT NULL DEFAULT 0,
@@ -199,6 +200,10 @@ class Database:
             self._conn.execute(
                 "ALTER TABLE characters ADD COLUMN profession INTEGER"
                 " NOT NULL DEFAULT 0")
+        # migrate legacy rows saved with map_id '1' — that id is the client's
+        # LoadingScene placeholder and hangs the world-entry loader
+        self._conn.execute(
+            "UPDATE characters SET map_id = '11' WHERE map_id = '1'")
         self._conn.commit()
 
     # -- accounts -----------------------------------------------------

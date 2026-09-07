@@ -168,11 +168,44 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             P.REQ_GUILD_BATTLE_RANK: self.h_req_guild_battle_rank,
             P.REQ_GUILD_SCORE_INFO: self.h_req_guild_score_info,
             P.ENTER_GUILD_BATTLE: self.h_enter_guild_battle,
+            # login-time info burst (client fires these right after login;
+            # unanswered ones leave the corresponding UI panel waiting forever)
+            P.REQUEST_ACTIVITY_INFO: self.h_info_burst,
+            P.REQUEST_DANCE_INFO: self.h_info_burst,
+            P.REQUEST_GUILD_BOSS: self.h_info_burst,
+            P.REQUEST_SIGN_30_DAY_INFO: self.h_info_burst,
+            P.REQUEST_SIGN_WEEK_INFO: self.h_info_burst,
+            P.REQUEST_INVEST_PACK: self.h_info_burst,
+            P.REQUEST_DAILY_BUY: self.h_info_burst,
+            P.REQUEST_DAILY_ACTIVE: self.h_info_burst,
+            P.REQUEST_RETRIEVE_INFO: self.h_info_burst,
+            P.REQ_LEVEL_REWARD: self.h_info_burst,
+            P.REQUIRE_VIP_INFO: self.h_info_burst,
+            P.REQUEST_DOMIN_INFO: self.h_info_burst,
+            P.REQUEST_DANCE_STATE_INFO: self.h_info_burst,
+            P.REQUEST_GUILD_MAP_INFO: self.h_info_burst,
         }
 
     # ------------------------------------------------------------------
     # gate (login server, port 9777)
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # login-time info burst: activity / sign-in / dance / vip / daily etc.
+    # Each request gets its dedicated ret_* response with an EMPTY or
+    # minimal body — the client treats an absent list as "no entries".
+    # Schemas recovered from Assembly-CSharp.dll (dnfile field order):
+    #   activity_info  ID/CurNum/Type/State/Parm/Parmstr/sign/time/next
+    #   dance_info     ID/enable/useType/endTime
+    #   dance_state_info uuid/ID/start_time/end_time/state/parm/duration/
+    #                  reset_time/parm2
+    #   daily_active   ID/count/Type   daily_buy ID/state  invest_pack ID/state
+    #   level_reward   ID/state        retrieve_info ID/state/count
+    #   guild_boss     id/state/time/curNum/sort_item
+    #   guild_map_info id/guildId/guildName/guildIcon/requireState/state
+    # ------------------------------------------------------------------
+    async def h_info_burst(self, s: Session, msg) -> None:
+        s.respond(msg, {})
+
     async def h_update_game_server(self, s: Session, msg) -> None:
         servers = [P.encode_game_server(
             server_id=config.SERVER_ID,
@@ -259,16 +292,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
 
     async def h_character_list(self, s: Session, msg) -> None:
         rows = self.server.db.list_characters(s.account_id or 0)
-        chars = [
-            sproto.encode_object({
-                0: r["id"],
-                1: r["name"],
-                2: r["level"],
-                3: r["sex"],
-            })
-            for r in rows
-        ]
-        # character_list.response {character(0)} — map of overview objects
+        # character_list.response {character(0)} — read_map of
+        # character_overview objects (same wire layout as an object array).
+        # The client dereferences .general.profession, .attribute_other.level
+        # and .visual on each — a flat {id,name,level,sex} blob crashes it.
+        chars = [W.encode_character_overview(r) for r in rows]
         s.respond(msg, {0: sproto.encode_object_array(chars)})
 
     async def h_character_create(self, s: Session, msg) -> None:
@@ -310,19 +338,27 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             self.server.db.set_equipped(row["id"], 0, start_weapon)
         for skill_id in prof_def["skills"]:
             self.server.db.learn_skill(row["id"], skill_id)
-        overview = sproto.encode_object({
-            0: row["id"], 1: row["name"], 2: row["level"], 3: row["sex"],
-        })
+        # character_create.response {character(0), errno(1)} — the client
+        # reads .general.profession, .createtime and .attribute_other.level
+        # off a character_overview, then immediately sends character_pick.
+        overview = W.encode_character_overview(row)
         s.respond(msg, {0: overview, 1: 0})
 
     async def h_character_pick(self, s: Session, msg) -> None:
         char_id = msg.body.get(0)
         row = self.server.db.get_character(char_id)
         if row is None or (row["account_id"] != (s.account_id or 0)):
-            s.respond(msg, {0: 1})  # errno
+            s.respond(msg, {0: 1})  # errno 1: not found
             return
         s.picked_character = row
-        s.respond(msg, {0: 0})  # errno 0 = ok
+        # Success reply carries an EMPTY body. The client's PickResponse
+        # treats ANY response with an errno field — including errno 0 — as a
+        # failure: it shows "Please try later!" (#{100153}), calls
+        # LeaveGame() (disconnect) and drops back to the login scene. The
+        # success path is just CloseBox()... which never runs here, so the
+        # wait box also hangs. The real flow is: empty response, then the
+        # enter_map push drives the scene load.
+        s.respond(msg, {})
         # baseline syncs right after pick: skills + friends + storage
         self._sync_skills(s, row["id"])
         await self._push_friend_info(s)
@@ -343,12 +379,18 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             return
         s.pending_world_player = None
         s.world_player = wp
-        s.push(P.MAIN_PLAYER_CREATE, {0: W.encode_main_player_create(wp)})
+        s.push(P.MAIN_PLAYER_CREATE, {0: W.encode_main_player_create(
+            wp, skills=[(r["skill_id"], r["level"])
+                        for r in self.server.db.list_skills(wp.char_id)])})
         for other in self.server.world.others(wp.map_id, wp.char_id):
             s.push(P.AOI_ADD, {0: W.encode_aoi_add(other)})
         for npc in self.server.world.npcs_in(wp.map_id):
             s.push(P.NPC_CREATE, {0: npc.blob()})
         self.server.world.join(wp)
+        # tell everyone already here about the newcomer
+        self.server.world.broadcast(wp.map_id, P.AOI_ADD,
+                                    {0: W.encode_aoi_add(wp)},
+                                    exclude=wp.char_id)
         log.info("%s entered map %s (line %s)", wp.name, wp.map_id,
                  wp.line_index)
 
@@ -362,8 +404,13 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         request schema — a server that waits for the client to request it
         deadlocks the loading widget.
         """
-        map_id = row["map_id"] or "1"
-        wp = W.WorldPlayer(s, row["id"], row["name"], row["level"], row["sex"])
+        # 0 means "never entered the world yet"; fall back to the main city.
+        # NEVER default to map "1" — in the client's MapInfoData table that is
+        # the LoadingScene placeholder, and entering it hangs the loader.
+        map_id = row["map_id"] if row["map_id"] not in (None, "", "1") \
+            else economy.MAIN_CITY_MAP
+        wp = W.WorldPlayer(s, row["id"], row["name"], row["level"],
+                           row["sex"], row["profession"])
         wp.map_id = map_id
         wp.line_index = 0
         wp.pos = {
@@ -381,7 +428,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # Legacy request form (tests / reconnect helpers). The real client
         # never requests enter_map — the server pushes it after pick, and
         # the client answers with map_ready.
-        map_id = msg.body.get(0, "1")
+        map_id = msg.body.get(0, economy.MAIN_CITY_MAP)
         line_index = msg.body.get(1, 0)
         row = getattr(s, "picked_character", None)
         if row is None:
@@ -391,7 +438,8 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             return
         if isinstance(map_id, int):
             map_id = str(map_id)
-        wp = W.WorldPlayer(s, row["id"], row["name"], row["level"], row["sex"])
+        wp = W.WorldPlayer(s, row["id"], row["name"], row["level"],
+                           row["sex"], row["profession"])
         wp.map_id = map_id
         wp.line_index = line_index
         wp.pos = {
@@ -911,6 +959,10 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         return attack
 
     def _sync_skills(self, s: Session, char_id: int) -> None:
+        # The client parses tag 0 as map<string, skill_info>: an object array
+        # of skill_info blobs whose string skillId becomes the dict key.
+        # Elements must be skill_info objects (string skillId!) or the client
+        # throws "invalid pos" inside read_string and drops the push.
         rows = self.server.db.list_skills(char_id)
         blobs = [P.encode_skill_info(r["skill_id"], r["level"]) for r in rows]
         s.push(P.SYNC_SKILL_INFO, {0: sproto.encode_object_array(blobs)})
@@ -1289,10 +1341,14 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             return
         db.add_friend(row["id"], target["id"])
         db.add_friend(target["id"], row["id"])
-        s.respond(msg, {0: 0, 1: name})
+        # ret_add_friend carries ONE friend_info object (see encode_friend_entry)
+        online = self.server.world.get_player_anywhere(target["id"]) is not None
+        s.respond(msg, {0: P.encode_friend_entry(
+            target["id"], target["name"], target["level"], online)})
         other = self.server.world.get_player_anywhere(target["id"])
         if other is not None:
-            other.conn.push(P.NOTICE_ADD_FRIEND, {0: row["name"]})
+            other.conn.push(P.NOTICE_ADD_FRIEND, {0: P.encode_friend_entry(
+                row["id"], row["name"], row["level"], True)})
 
     async def h_del_friend(self, s: Session, msg) -> None:
         db = self.server.db
@@ -1310,7 +1366,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         s.respond(msg, {0: 0})
         other = self.server.world.get_player_anywhere(target["id"])
         if other is not None:
-            other.conn.push(P.BE_DELETED_FRIEND, {0: row["name"]})
+            other.conn.push(P.BE_DELETED_FRIEND, {0: row["id"]})
 
     async def h_ask_character_info(self, s: Session, msg) -> None:
         row = self._require_char(s)
@@ -1334,15 +1390,16 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         row = self._require_char(s)
         if row is None:
             return
-        entries = []
+        # The client's syn_friend_info handler adds ONE friend per push, so
+        # send one friend_info object per message (empty pushes are fine and
+        # simply no-op client-side — HasFriend is false).
         for f in db.list_friends(row["id"]):
             fr = db.get_character(f["friend_id"])
             if fr is None:
                 continue
             online = self.server.world.get_player_anywhere(fr["id"]) is not None
-            entries.append(P.encode_friend_entry(fr["id"], fr["name"],
-                                                 fr["level"], online))
-        s.push(P.SYN_FRIEND_INFO, {0: sproto.encode_object_array(entries)})
+            s.push(P.SYN_FRIEND_INFO, {0: P.encode_friend_entry(
+                fr["id"], fr["name"], fr["level"], online)})
 
     # ------------------------------------------------------------------
     # mail

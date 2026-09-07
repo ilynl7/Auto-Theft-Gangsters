@@ -49,9 +49,10 @@ async def test_npcs_are_created_on_map_entry(server):
     general = sproto.encode_object({0: "NpcWatcher", 2: 0})
     resp = await c.rpc(P.CHARACTER_CREATE, {0: general})
     char_id = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
-                                  {0: "i", 1: "s", 2: "i", 3: "i"})[0]
+                                  {0: "i", 1: "o", 2: "o", 3: "o",
+                                   4: "i", 5: "i"})[0]
     await c.rpc(P.CHARACTER_PICK, {0: char_id})
-    await c.send_request(P.ENTER_MAP, {0: "1", 1: 0, 2: 1})
+    await c.send_request(P.ENTER_MAP, {0: "11", 1: 0, 2: 1})
     # read the push burst: response + npc_create per NPC
     npc_frames = []
     for _ in range(10):
@@ -62,9 +63,10 @@ async def test_npcs_are_created_on_map_entry(server):
                 npc_frames.append(sproto.decode_typed(
                     sproto.as_bytes(frame.body[0]),
                     {0: "i", 1: "i", 2: "i", 3: "i", 4: "i", 5: "o"}))
-        if len(npc_frames) >= len(economy.NPC_SPAWNS["1"]):
+        if len(npc_frames) >= len(economy.NPC_SPAWNS[economy.MAIN_CITY_MAP]):
             break
-    assert len(npc_frames) == len(economy.NPC_SPAWNS["1"]), "all map NPCs pushed"
+    assert len(npc_frames) == len(economy.NPC_SPAWNS[economy.MAIN_CITY_MAP]), \
+        "all map NPCs pushed"
     assert {n[1] for n in npc_frames} == {1, 2, 3}
     await c.close()
 
@@ -228,7 +230,11 @@ async def test_friends_flow(server):
     await a.drain(0.4)
 
     resp = await a.rpc(P.ADD_FRIEND, {0: "FriendB"})
-    assert resp.body[0] == 0
+    # ret_add_friend carries a friend_info object:
+    # {characterId(0), friendId(1), name(2), level(3), ...}
+    fr = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
+                             {0: "i", 1: "i", 2: "s", 3: "i"})
+    assert fr[1] == b_id and fr[2] == "FriendB"
     friends = {f["friend_id"] for f in srv.db.list_friends(a_id)}
     assert b_id in friends
     # bidirectional
@@ -236,9 +242,11 @@ async def test_friends_flow(server):
     assert a_id in friends_b
 
     resp = await a.rpc(P.ASK_CHARACTER_INFO, {0: "FriendB"})
+    # the client's ask_character_info handler ignores the body (no-op), so we
+    # answer with the same friend_info object as ret_add_friend
     entry = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
-                                {0: "i", 1: "s", 2: "i", 3: "i"})
-    assert entry[0] == b_id and entry[1] == "FriendB"
+                                {0: "i", 1: "i", 2: "s", 3: "i"})
+    assert entry[1] == b_id and entry[2] == "FriendB"
 
     resp = await a.rpc(P.DEL_FRIEND, {0: "FriendB"})
     assert resp.body[0] == 0

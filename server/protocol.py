@@ -275,6 +275,37 @@ IMPACT_NPC = 298
 LOGIN_MAX_COUNT = 578
 RETRIEVE_ACCOUNT = 660
 
+# --- login-time info burst (client fires these right after login; each has
+# a dedicated ret tag — an unanswered request leaves a UI panel waiting) -----
+REQUEST_ACTIVITY_INFO = 225
+RET_REQUEST_ACTIVITY_INFO = 619
+REQUEST_DANCE_INFO = 227
+RET_REQUEST_DANCE_INFO = 623
+REQUEST_GUILD_BOSS = 195
+RET_REQUEST_GUILD_BOSS = 599
+REQUEST_SIGN_30_DAY_INFO = 252
+RET_REQUEST_30_DAY_INFO = 640
+REQUEST_SIGN_WEEK_INFO = 253
+RET_REQUEST_SIGN_WEEK_INFO = 641
+REQUEST_INVEST_PACK = 257
+RET_REQUEST_INVEST_PACK = 645
+REQUEST_DAILY_BUY = 258
+RET_REQUEST_DAILY_BUY = 646
+REQUEST_DAILY_ACTIVE = 261
+RET_REQUEST_DAILY_ACTIVE = 649
+REQUEST_RETRIEVE_INFO = 278
+RET_REQUEST_RETRIEVE_INFO = 658
+REQ_LEVEL_REWARD = 296
+RET_LEVEL_REWARD = 674
+REQUIRE_VIP_INFO = 299
+RET_REQUIRE_VIP_INFO = 678
+REQUEST_DOMIN_INFO = 310
+RET_DOMIN_INFO = 684
+REQUEST_DANCE_STATE_INFO = 313
+SYNC_DANCE_STATE_INFO = 686
+REQUEST_GUILD_MAP_INFO = 319
+RET_REQUEST_GUILD_MAP_INFO = 689
+
 TAG_NAMES = {
     VISITOR: "visitor",
     VERFIY: "verfiy",
@@ -486,6 +517,34 @@ TAG_NAMES = {
     RELIFE_PLAYER: "relife_player",
     LOGIN_MAX_COUNT: "login_max_count",
     RETRIEVE_ACCOUNT: "retrieve_account",
+    REQUEST_ACTIVITY_INFO: "request_activity_info",
+    RET_REQUEST_ACTIVITY_INFO: "ret_request_activity_info",
+    REQUEST_DANCE_INFO: "request_dance_info",
+    RET_REQUEST_DANCE_INFO: "ret_request_dance_info",
+    REQUEST_GUILD_BOSS: "request_guild_boss",
+    RET_REQUEST_GUILD_BOSS: "ret_request_guild_boss",
+    REQUEST_SIGN_30_DAY_INFO: "request_sign_30_day_info",
+    RET_REQUEST_30_DAY_INFO: "ret_request_30_day_info",
+    REQUEST_SIGN_WEEK_INFO: "request_sign_week_info",
+    RET_REQUEST_SIGN_WEEK_INFO: "ret_request_sign_week_info",
+    REQUEST_INVEST_PACK: "request_invest_pack",
+    RET_REQUEST_INVEST_PACK: "ret_request_invest_pack",
+    REQUEST_DAILY_BUY: "request_daily_buy",
+    RET_REQUEST_DAILY_BUY: "ret_request_daily_buy",
+    REQUEST_DAILY_ACTIVE: "request_daily_active",
+    RET_REQUEST_DAILY_ACTIVE: "ret_request_daily_active",
+    REQUEST_RETRIEVE_INFO: "request_retrieve_info",
+    RET_REQUEST_RETRIEVE_INFO: "ret_request_retrieve_info",
+    REQ_LEVEL_REWARD: "req_level_reward",
+    RET_LEVEL_REWARD: "ret_level_reward",
+    REQUIRE_VIP_INFO: "require_vip_info",
+    RET_REQUIRE_VIP_INFO: "ret_require_vip_info",
+    REQUEST_DOMIN_INFO: "request_domin_info",
+    RET_DOMIN_INFO: "ret_domin_info",
+    REQUEST_DANCE_STATE_INFO: "request_dance_state_info",
+    SYNC_DANCE_STATE_INFO: "sync_dance_state_info",
+    REQUEST_GUILD_MAP_INFO: "request_guild_map_info",
+    RET_REQUEST_GUILD_MAP_INFO: "ret_request_guild_map_info",
 }
 
 
@@ -683,6 +742,9 @@ RESPONSE_SPECS = {
     CHARACTER_CREATE: {0: "o", 1: "i"},
     CHARACTER_PICK: {0: "i"},
     MAP_READY: {},
+    # enter_map response (legacy request path): {character(0)}; the PUSH
+    # variant (no session) is {mapInfoId(0), line_index(1), line_count(2)}
+    # and is decoded by the push path in tests.
     ENTER_MAP: {0: "o"},
     HEART_BEAT: {0: "i", 1: "i"},
     # provisional (see server/economy.py for the field layout notes)
@@ -711,6 +773,8 @@ RESPONSE_SPECS = {
     SYNC_FASHION_BACKPACK_ITEM: {0: "oa"},
     SYNC_ITEM_PACK: {0: "oa"},
     RET_SKILL_USE: {0: "i", 1: "i"},
+    # sync_skill_info: the client reads tag 0 as map<string, skill_info> —
+    # an OBJECT ARRAY of skill_info blobs (key taken from v.skillId)
     SYNC_SKILL_INFO: {0: "oa"},
     SHOW_DAMAGE_BOARD: {0: "i", 1: "i", 2: "i"},
     DROP_ITEM_INFO: {0: "i", 1: "i", 2: "i"},
@@ -729,9 +793,14 @@ RESPONSE_SPECS = {
     RET_GUILD_DONATE: {0: "i", 1: "i"},
     RET_SEARCH_GUILD: {0: "oa"},
     SYNC_GUILD_NEW_MEMBER: {0: "s"},
-    RET_ADD_FRIEND: {0: "i", 1: "s"},
+    # ret_add_friend / notice_add_friend: ONE friend_info object at tag 0
+    RET_ADD_FRIEND: {0: "o"},
+    NOTICE_ADD_FRIEND: {0: "o"},
+    # be_deleted_friend / ret_del_friend: characterId integer at tag 0
     RET_DEL_FRIEND: {0: "i"},
-    SYN_FRIEND_INFO: {0: "oa"},
+    BE_DELETED_FRIEND: {0: "i"},
+    # syn_friend_info: ONE friend_info object at tag 0, not an array
+    SYN_FRIEND_INFO: {0: "o"},
     MAIL_UPDATE: {0: "o"},
     SEND_MAIL_BOX: {0: "oa"},
     MAIL_DELETE: {0: "i"},
@@ -777,6 +846,22 @@ RESPONSE_SPECS = {
     RET_GUILD_SCORE_INFO: {0: "i", 1: "i"},
     GUILD_BATTLE_START: {0: "i"},
     RET_GUILD_BATTLE_STATE: {0: "i"},
+    # login-time info burst — list/object payloads matching the client's
+    # SprotoType decode switch order (see handlers.h_info_burst)
+    RET_REQUEST_ACTIVITY_INFO: {0: "oa"},
+    RET_REQUEST_DANCE_INFO: {0: "oa"},
+    RET_REQUEST_GUILD_BOSS: {0: "i", 1: "i"},
+    RET_REQUEST_30_DAY_INFO: {0: "i"},
+    RET_REQUEST_SIGN_WEEK_INFO: {0: "i"},
+    RET_REQUEST_INVEST_PACK: {0: "oa"},
+    RET_REQUEST_DAILY_BUY: {0: "oa"},
+    RET_REQUEST_DAILY_ACTIVE: {0: "oa"},
+    RET_REQUEST_RETRIEVE_INFO: {0: "oa"},
+    RET_LEVEL_REWARD: {0: "oa"},
+    RET_REQUIRE_VIP_INFO: {0: "i", 1: "i"},
+    RET_DOMIN_INFO: {0: "i"},
+    SYNC_DANCE_STATE_INFO: {0: "oa"},
+    RET_REQUEST_GUILD_MAP_INFO: {0: "oa"},
 }
 
 
@@ -833,6 +918,20 @@ RESPONSE_ALIASES = {
     REQ_GUILD_SCORE_INFO: RET_GUILD_SCORE_INFO,
     REQ_GUILD_BATTLE_STATE: RET_GUILD_BATTLE_STATE,
     ENTER_GUILD_BATTLE: RET_ENTER_GUILD_BATTLE,
+    REQUEST_ACTIVITY_INFO: RET_REQUEST_ACTIVITY_INFO,
+    REQUEST_DANCE_INFO: RET_REQUEST_DANCE_INFO,
+    REQUEST_GUILD_BOSS: RET_REQUEST_GUILD_BOSS,
+    REQUEST_SIGN_30_DAY_INFO: RET_REQUEST_30_DAY_INFO,
+    REQUEST_SIGN_WEEK_INFO: RET_REQUEST_SIGN_WEEK_INFO,
+    REQUEST_INVEST_PACK: RET_REQUEST_INVEST_PACK,
+    REQUEST_DAILY_BUY: RET_REQUEST_DAILY_BUY,
+    REQUEST_DAILY_ACTIVE: RET_REQUEST_DAILY_ACTIVE,
+    REQUEST_RETRIEVE_INFO: RET_REQUEST_RETRIEVE_INFO,
+    REQ_LEVEL_REWARD: RET_LEVEL_REWARD,
+    REQUIRE_VIP_INFO: RET_REQUIRE_VIP_INFO,
+    REQUEST_DOMIN_INFO: RET_DOMIN_INFO,
+    REQUEST_DANCE_STATE_INFO: SYNC_DANCE_STATE_INFO,
+    REQUEST_GUILD_MAP_INFO: RET_REQUEST_GUILD_MAP_INFO,
 }
 
 
@@ -958,15 +1057,28 @@ def encode_npc_create(npc) -> bytes:
 
 
 def encode_skill_info(skill_id: int, level: int) -> bytes:
-    """sync_skill_info element: {skill_id(0), level(1)}."""
-    return _enc.encode_object({0: skill_id, 1: level})
+    """sync_skill_info / character.skills element (SprotoType.skill_info).
+
+    The client decodes skillId as a STRING (read_string) and uses it as the
+    dictionary key; it must be a string like "101", not an integer — an int
+    here makes read_string hit the end of the stream and the push dies with
+    "Exception: invalid pos" on the client.
+    """
+    return _enc.encode_object({0: str(skill_id), 1: level})
 
 
 def encode_friend_entry(char_id: int, name: str, level: int = 1,
                         online: bool = False) -> bytes:
-    """syn_friend_info element: {char_id(0), name(1), level(2), online(3)}."""
+    """friend_info object (SprotoType.friend_info).
+
+    Fields: characterId(0), friendId(1), name(2), level(3), profession(4),
+    combValue(5), state(6), timeInfo(7), friendType(8). The client's friend
+    handlers (syn_friend_info / ret_add_friend / notice_add_friend) add ONE
+    friend_info per push — send a single object, never an array.
+    """
     return _enc.encode_object({
-        0: char_id, 1: name, 2: level, 3: 1 if online else 0,
+        0: char_id, 1: char_id, 2: name, 3: level, 4: 0,
+        6: 1 if online else 0,
     })
 
 
