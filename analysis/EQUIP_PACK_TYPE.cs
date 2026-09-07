@@ -1,0 +1,6 @@
+public enum EQUIP_PACK_TYPE
+{
+	BACKPACK,
+	FASHION,
+	BADGE
+}

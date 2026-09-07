@@ -1,0 +1,12 @@
+public enum RANK_TYPE
+{
+	INVALID,
+	FIGHT,
+	LEVEL,
+	LADDER,
+	CASH,
+	TOWER,
+	GUILD,
+	CAR,
+	SEX
+}

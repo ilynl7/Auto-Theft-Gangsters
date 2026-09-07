@@ -1,0 +1,10 @@
+public enum SKILL_ADD_TYPE
+{
+	SHIT = 3001,
+	SCRI,
+	SEXD,
+	SATE,
+	SATM,
+	SATC,
+	SATP
+}

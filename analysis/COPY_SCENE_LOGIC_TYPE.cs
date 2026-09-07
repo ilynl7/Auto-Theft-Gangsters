@@ -1,0 +1,5 @@
+public enum COPY_SCENE_LOGIC_TYPE
+{
+	PK_MAP = 1,
+	EQUIP_COPY = 0x10
+}

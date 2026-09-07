@@ -1,0 +1,6 @@
+public enum ITEM_SHOW_TYPE
+{
+	EQUIPPACK,
+	BACKPACK,
+	REWARD_TIPS
+}

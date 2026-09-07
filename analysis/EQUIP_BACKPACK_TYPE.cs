@@ -1,0 +1,10 @@
+public enum EQUIP_BACKPACK_TYPE
+{
+	WEAPON,
+	HEAD,
+	BODY,
+	LEG,
+	BELT,
+	NECKLACE,
+	COUNT
+}

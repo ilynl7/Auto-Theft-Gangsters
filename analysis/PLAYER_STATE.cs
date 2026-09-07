@@ -1,0 +1,7 @@
+public enum PLAYER_STATE
+{
+	NORMAL,
+	DRIVING,
+	DANCE,
+	SOCIAL_DANCE
+}

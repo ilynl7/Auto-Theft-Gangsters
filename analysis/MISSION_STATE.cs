@@ -1,0 +1,7 @@
+public enum MISSION_STATE
+{
+	INVALID = -1,
+	FAIL,
+	ACCEPTED,
+	COMPLETE
+}

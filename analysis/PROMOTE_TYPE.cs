@@ -1,0 +1,7 @@
+public enum PROMOTE_TYPE
+{
+	NORMAL,
+	HONOR_LIMIT,
+	LEVEL_GET,
+	LEVEL_LIMIT
+}

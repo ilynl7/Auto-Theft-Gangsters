@@ -1,0 +1,8 @@
+public enum CENTERONCHILD_CENTERPOS
+{
+	CENTER,
+	LEFT,
+	RIGHT,
+	TOP,
+	BOTTOM
+}

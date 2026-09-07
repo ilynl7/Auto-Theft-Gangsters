@@ -1,0 +1,8 @@
+public enum JUMP_PATH
+{
+	SHOP,
+	SLOT,
+	RACE,
+	SCUFFLE,
+	EQUIP_COPY
+}

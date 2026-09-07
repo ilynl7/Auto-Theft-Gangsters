@@ -1,0 +1,16 @@
+public enum ATTRIBUTE_TYPE
+{
+	INVALID = -1,
+	ATK = 1001,
+	HP = 1002,
+	DEF = 1003,
+	HIT = 1004,
+	DGE = 1005,
+	CRI = 1006,
+	RES = 1007,
+	EXD = 1008,
+	EXR = 1009,
+	REC = 1010,
+	MOV = 1011,
+	CRD = 1012
+}

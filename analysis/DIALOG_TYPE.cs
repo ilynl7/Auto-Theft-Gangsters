@@ -1,0 +1,6 @@
+public enum DIALOG_TYPE
+{
+	NONE,
+	ACCEPT,
+	COMPLETE
+}

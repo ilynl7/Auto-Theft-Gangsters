@@ -1,0 +1,9 @@
+public enum BUFF_TYPE
+{
+	INVALID = -1,
+	CHANGE_ATTR,
+	STUN,
+	SLEEP,
+	KNOCK_DOWN,
+	INVINCIBLE
+}

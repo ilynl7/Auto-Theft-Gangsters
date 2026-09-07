@@ -1,0 +1,7 @@
+public enum COPY_SCENE_TYPE
+{
+	NORMAL,
+	DAILY,
+	SPECIAL,
+	MULTI
+}

@@ -1,0 +1,9 @@
+public enum OTHERPLAYER_TAB
+{
+	INVILAD = -1,
+	PLAYERINFO_TAP,
+	TAB_1,
+	TAB_2,
+	TAB_3,
+	TAB_4
+}

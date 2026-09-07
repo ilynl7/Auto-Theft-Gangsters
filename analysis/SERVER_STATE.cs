@@ -1,0 +1,7 @@
+public enum SERVER_STATE
+{
+	NORMAL,
+	BUSY,
+	FULL,
+	DISABLE
+}

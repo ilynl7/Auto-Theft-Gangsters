@@ -1,0 +1,5 @@
+public enum AI_EVENT
+{
+	ON_BEATON,
+	ON_SKILLFINISHED
+}

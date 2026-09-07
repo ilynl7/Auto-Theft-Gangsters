@@ -1,0 +1,8 @@
+public enum DEBUGLEVEL
+{
+	DEBUG,
+	INFO,
+	WARING,
+	ERRO,
+	NOLOG
+}

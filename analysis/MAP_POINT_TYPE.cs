@@ -1,0 +1,6 @@
+public enum MAP_POINT_TYPE
+{
+	NPC,
+	TELEPORT,
+	MONSTER
+}

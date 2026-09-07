@@ -1,0 +1,7 @@
+public enum HaoYouRoot_TYPE
+{
+	FRIEND_LIST,
+	ENEMY_LIST,
+	APPLY_FRIEND,
+	MAIL_LIST
+}

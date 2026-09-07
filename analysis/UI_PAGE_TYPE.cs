@@ -1,0 +1,7 @@
+public enum UI_PAGE_TYPE
+{
+	INVALID = -1,
+	BACK_PACK_ITEM,
+	ENHANCE_EQUIP,
+	REFINE
+}

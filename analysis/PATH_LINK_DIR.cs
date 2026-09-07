@@ -1,0 +1,7 @@
+public enum PATH_LINK_DIR
+{
+	FORWARD,
+	BACKWARD,
+	LEFT,
+	RIGHT
+}
