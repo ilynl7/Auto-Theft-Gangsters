@@ -379,9 +379,12 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             return
         s.pending_world_player = None
         s.world_player = wp
-        s.push(P.MAIN_PLAYER_CREATE, {0: W.encode_main_player_create(
+        # encode_main_player_create returns the PUSH body field dict
+        # ({character(0), movement(1)}) — the client decodes the push body
+        # directly as main_player_create.request.
+        s.push(P.MAIN_PLAYER_CREATE, W.encode_main_player_create(
             wp, skills=[(r["skill_id"], r["level"])
-                        for r in self.server.db.list_skills(wp.char_id)])})
+                        for r in self.server.db.list_skills(wp.char_id)]))
         for other in self.server.world.others(wp.map_id, wp.char_id):
             s.push(P.AOI_ADD, {0: W.encode_aoi_add(other)})
         for npc in self.server.world.npcs_in(wp.map_id):
@@ -447,7 +450,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             "z": row["pos_z"], "o": row["pos_o"],
         }
         s.pending_world_player = wp
-        s.respond(msg, {0: W.encode_main_player_create(wp)})
+        s.respond(msg, W.encode_main_player_create(wp))
         for other in self.server.world.others(map_id, row["id"]):
             s.push(P.AOI_ADD, {0: W.encode_aoi_add(other)})
         for npc in self.server.world.npcs_in(map_id):

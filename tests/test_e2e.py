@@ -290,9 +290,8 @@ async def test_full_login_flow(server):
 
     # --- enter map ---
     resp = await g.rpc(P.ENTER_MAP, {0: "11", 1: 0, 2: 1})
-    assert 0 in resp.body  # main_player_create blob
-    mp = sproto.decode_fields(sproto.as_bytes(resp.body[0]))
-    own_char = sproto.decode_fields(sproto.as_bytes(mp[0]))
+    # the body IS main_player_create.request: character(0) + movement(1)
+    own_char = sproto.decode_fields(sproto.as_bytes(resp.body[0]))
     assert own_char[0] == char_id
 
     # --- heartbeat ---

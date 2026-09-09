@@ -220,12 +220,17 @@ async def test_real_client_world_entry_flow(server):
     # 2) the client loads the map and answers map_ready
     await c.send_request(P.MAP_READY, {})
 
-    # 3) the server delivers main_player_create with a parseable character
+    # 3) the server delivers main_player_create with a parseable character.
+    # The push body IS main_player_create.request — the client's
+    # ProcessPack decodes it directly (GenRequest(tag, buffer, offset, len)),
+    # so character(0)/movement(1) must be top-level fields. An extra
+    # {0: request} wrapper makes the client decode the request blob as
+    # SprotoType.character -> "read invalid integer size" -> loading hang.
     mpc = await c.next_push(P.MAIN_PLAYER_CREATE)
     assert mpc is not None, "main_player_create must arrive after map_ready"
-    top = sproto.decode_typed(sproto.as_bytes(mpc.body[0]),
-                              {0: "o", 1: "o"})
-    char = sproto.decode_typed(sproto.as_bytes(top[0]), CHARACTER_SPEC)
+    body = mpc.body
+    assert 0 in body and 1 in body, "push body must be the request fields"
+    char = sproto.decode_typed(sproto.as_bytes(body[0]), CHARACTER_SPEC)
     assert char[0] == char_id
     move = sproto.decode_typed(sproto.as_bytes(char[7]), MOVEMENT_SPEC)
     assert move is not None and 0 in move
@@ -235,7 +240,7 @@ async def test_real_client_world_entry_flow(server):
     assert 2 in char and 5 in char and 6 in char and 13 in char
 
     # the standalone movement field (tag 1) is a valid movement blob too
-    move2 = sproto.decode_typed(sproto.as_bytes(top[1]), MOVEMENT_SPEC)
+    move2 = sproto.decode_typed(sproto.as_bytes(body[1]), MOVEMENT_SPEC)
     assert 0 in move2
 
     await c.close()

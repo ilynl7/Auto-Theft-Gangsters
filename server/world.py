@@ -371,8 +371,18 @@ def encode_aoi_update_move(player: WorldPlayer) -> bytes:
 
 
 def encode_main_player_create(player: WorldPlayer,
-                              skills: list = None) -> bytes:
-    """main_player_create.request {character(0), movement(1)}.
+                              skills: list = None) -> dict:
+    """Field dict for the main_player_create PUSH body:
+    {character(0), movement(1)}.
+
+    The client's NetLogic.ProcessPack decodes a push body DIRECTLY as
+    main_player_create.request (GenRequest(tag, buffer, offset, len)), so
+    the body must BE the request fields — NOT an extra object wrapping
+    them. Wrapping the request in {0: request} makes the client decode the
+    request blob itself as SprotoType.character, whose first field is a
+    length dword that read_integer rejects:
+    "Exception: read invalid integer size (362)" -> the packet handler dies
+    and the loading screen hangs forever.
 
     character is a full SprotoType.character blob (see encode_character_blob);
     a partial one crashes the client's spawn handler and hangs the loading
@@ -383,7 +393,7 @@ def encode_main_player_create(player: WorldPlayer,
         player.char_id, player.name, player.level, player.movement_blob(),
         profession=player.profession, line_index=player.line_index,
         map_id=player.map_id, skills=skills)
-    return P._enc.encode_object({
+    return {
         0: character,
         1: player.movement_blob(),
-    })
+    }
