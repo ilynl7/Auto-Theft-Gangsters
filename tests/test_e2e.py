@@ -372,10 +372,11 @@ async def test_real_client_dispatch_session_only_responses(server):
 @pytest.mark.asyncio
 async def test_real_client_world_entry_flow(server):
     """Regression: the real client never sends enter_map — the SERVER pushes
-    enter_map(503) after character_pick, the client loads the scene, sends
-    map_ready(100), and only then receives main_player_create(504) + npc
-    burst (NetReceiver handlers). A server waiting for an enter_map request
-    deadlocks the loading widget after character creation."""
+    enter_map(503) after character_pick together with main_player_create(504)
+    (the client's loading bar is capped at 0.9 until CreateMainPlayer runs, so
+    map_ready(100) can only come after main_player_create), and the npc burst
+    follows map_ready (NetReceiver handlers). A server waiting for an
+    enter_map request deadlocks the loading widget after character creation."""
     srv, gate_port, game_port = server
     c = await _connect(game_port)
     resp = await c.rpc(P.VISITOR, {})
@@ -396,10 +397,9 @@ async def test_real_client_world_entry_flow(server):
     assert sproto.as_str(em.body[0]) == "11"
     assert em.body[1] == 0 and em.body[2] == 1
 
-    # client answers with map_ready, then receives the world
+    # client answers with map_ready after creating the main player, then
+    # receives the world burst
     await c.send_request(P.MAP_READY, {})
-    mpc = await c.next_push(P.MAIN_PLAYER_CREATE, timeout=3)
-    assert mpc is not None, "main_player_create must follow map_ready"
     npc_push = await c.next_push(P.NPC_CREATE, timeout=3)
     assert npc_push is not None, "map NPCs must be pushed after map_ready"
     assert srv.db.get_character(char_id)["name"] == "RealFlow"

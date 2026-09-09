@@ -371,20 +371,14 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         self._begin_world_entry(s, row)
 
     async def h_map_ready(self, s: Session, msg) -> None:
-        # Client finished loading the map scene (sent after our enter_map
-        # push). Deliver the world contents: own player, then everyone
-        # already here, then the map NPCs.
+        # Client finished loading the map scene AND created the main player
+        # (map_ready is only sent after main_player_create was processed).
+        # Deliver the world contents: everyone already here, then the NPCs.
         wp = getattr(s, "pending_world_player", None)
         if wp is None:
             return
         s.pending_world_player = None
         s.world_player = wp
-        # encode_main_player_create returns the PUSH body field dict
-        # ({character(0), movement(1)}) — the client decodes the push body
-        # directly as main_player_create.request.
-        s.push(P.MAIN_PLAYER_CREATE, W.encode_main_player_create(
-            wp, skills=[(r["skill_id"], r["level"])
-                        for r in self.server.db.list_skills(wp.char_id)]))
         for other in self.server.world.others(wp.map_id, wp.char_id):
             s.push(P.AOI_ADD, {0: W.encode_aoi_add(other)})
         for npc in self.server.world.npcs_in(wp.map_id):
@@ -400,12 +394,16 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
     def _begin_world_entry(self, s: Session, row) -> None:
         """Start the server-driven world entry for a picked character.
 
-        Real client flow (NetReceiver): the SERVER pushes enter_map(503)
-        {mapInfoId, line_index, line_count}; the client loads the map scene
-        and answers with map_ready(100); the server then pushes
-        main_player_create(504) + the aoi/npc bursts. enter_map has no
-        request schema — a server that waits for the client to request it
-        deadlocks the loading widget.
+        Real client flow (NetReceiver / LoadingUIRoot): the SERVER pushes
+        enter_map(503) {mapInfoId, line_index, line_count}; the client loads
+        the map scene (CanProcessPack=false until SceneController.Awake).
+        main_player_create(504) must ride WITH the enter_map push: the client
+        only sends map_ready(100) AFTER its loading bar passes 0.9, and that
+        bar is capped at 0.9 until GameManager.IsSceneReady — which is set by
+        ObjManager.CreateMainPlayer, i.e. by the main_player_create push.
+        Waiting for map_ready first deadlocks both sides at 90% with no
+        exception (the eternal loading screen). Only the aoi/npc burst waits
+        for map_ready.
         """
         # 0 means "never entered the world yet"; fall back to the main city.
         # NEVER default to map "1" — in the client's MapInfoData table that is
@@ -426,6 +424,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             1: 0,               # line_index
             2: 1,               # line_count
         })
+        # main_player_create must arrive together with enter_map: the client
+        # cannot send map_ready until the main player exists.
+        s.push(P.MAIN_PLAYER_CREATE, W.encode_main_player_create(
+            wp, skills=[(r["skill_id"], r["level"])
+                        for r in self.server.db.list_skills(wp.char_id)]))
 
     async def h_enter_map(self, s: Session, msg) -> None:
         # Legacy request form (tests / reconnect helpers). The real client

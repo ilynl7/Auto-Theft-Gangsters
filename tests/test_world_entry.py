@@ -2,10 +2,12 @@
 
 The actual v1.19 client never sends an enter_map request: after character_pick
 the SERVER pushes enter_map(503), the client loads the map scene and answers
-map_ready(100), and the server then pushes main_player_create(504) + aoi/npc
-bursts. These tests drive that exact sequence and parse the wire blobs with
-the decompiled client's field tags, which caught the loading-hang bug
-(character.movement encoded at tag 5 instead of 7).
+map_ready(100) only after main_player_create(504) is processed — the
+loading bar is capped at 0.9 until IsSceneReady (ObjManager.CreateMainPlayer)
+— so main_player_create must ride WITH the enter_map push and only the
+aoi/npc burst waits for map_ready. These tests drive that exact sequence and
+parse the wire blobs with the decompiled client's field tags, which caught
+the loading-hang bug (character.movement encoded at tag 5 instead of 7).
 """
 
 import asyncio
@@ -207,7 +209,7 @@ def test_character_overview_blob():
 
 @pytest.mark.asyncio
 async def test_real_client_world_entry_flow(server):
-    """pick -> (push) enter_map -> map_ready -> (push) main_player_create."""
+    """pick -> (push) enter_map + main_player_create -> map_ready -> aoi/npc."""
     srv, gate_port, game_port = server
     c, char_id = await _login_and_create(game_port, "FlowRider")
 
@@ -217,17 +219,16 @@ async def test_real_client_world_entry_flow(server):
     assert enter is not None, "server must push enter_map after pick"
     assert sproto.as_str(enter.body[0]) == "11"
 
-    # 2) the client loads the map and answers map_ready
-    await c.send_request(P.MAP_READY, {})
-
-    # 3) the server delivers main_player_create with a parseable character.
-    # The push body IS main_player_create.request — the client's
+    # 2) main_player_create must arrive TOGETHER with enter_map: the client
+    # only sends map_ready AFTER its loading bar passes 0.9, and that bar is
+    # capped at 0.9 until IsSceneReady (set by CreateMainPlayer from this
+    # push). The push body IS main_player_create.request — the client's
     # ProcessPack decodes it directly (GenRequest(tag, buffer, offset, len)),
     # so character(0)/movement(1) must be top-level fields. An extra
     # {0: request} wrapper makes the client decode the request blob as
     # SprotoType.character -> "read invalid integer size" -> loading hang.
     mpc = await c.next_push(P.MAIN_PLAYER_CREATE)
-    assert mpc is not None, "main_player_create must arrive after map_ready"
+    assert mpc is not None, "main_player_create must arrive with enter_map"
     body = mpc.body
     assert 0 in body and 1 in body, "push body must be the request fields"
     char = sproto.decode_typed(sproto.as_bytes(body[0]), CHARACTER_SPEC)
@@ -242,6 +243,11 @@ async def test_real_client_world_entry_flow(server):
     # the standalone movement field (tag 1) is a valid movement blob too
     move2 = sproto.decode_typed(sproto.as_bytes(body[1]), MOVEMENT_SPEC)
     assert 0 in move2
+
+    # 3) the client (now scene-ready) answers map_ready and gets the burst
+    await c.send_request(P.MAP_READY, {})
+    npc_push = await c.next_push(P.NPC_CREATE, timeout=3)
+    assert npc_push is not None, "map NPCs must be pushed after map_ready"
 
     await c.close()
 
@@ -267,8 +273,8 @@ async def test_aoi_add_uses_character_aoi_blob(server):
 
     for c in (a, b):
         await c.next_push(P.ENTER_MAP)
-        await c.send_request(P.MAP_READY, {})
         await c.next_push(P.MAIN_PLAYER_CREATE)
+        await c.send_request(P.MAP_READY, {})
 
     # AoiA must receive AoiB through aoi_add with movement at tag 7
     aoi = await a.next_push(P.AOI_ADD, timeout=3.0)
@@ -318,8 +324,8 @@ async def test_syn_friend_info_single_object(server):
     b, b_id = await _login_and_create(game_port, "FriendSyncB")
     for c in (a, b):
         await c.next_push(P.ENTER_MAP)
-        await c.send_request(P.MAP_READY, {})
         await c.next_push(P.MAIN_PLAYER_CREATE)
+        await c.send_request(P.MAP_READY, {})
     await a.drain(0.3)
 
     resp = await a.rpc(P.ADD_FRIEND, {0: "FriendSyncB"})
