@@ -31,6 +31,9 @@ UPDATE_CLIENT_STATE = 280
 REFRESH_ONLINE_STATE = 281
 GAME_CHECK = 308
 
+REQ_OFFLINE_CHAT = 168
+RET_OFFLINE_CHAT = 579
+
 ENTER_MAP = 503
 MAIN_PLAYER_CREATE = 504
 AOI_ADD = 505
@@ -44,6 +47,11 @@ RET_CHAT = 528
 
 HEART_BEAT = 218
 LEAVE_GAME = 234
+
+# --- offline chat (client's ChatHistory.InitOfflineChat fires this on the
+# first chat-panel open; an unanswered request leaves tag 168 unhandled) -----
+REQ_OFFLINE_CHAT = 168
+RET_OFFLINE_CHAT = 579
 
 # --- missions (tags from Protocol registry; schemas provisional)  ----------
 ACCEPT_MISSION = 112
@@ -325,6 +333,8 @@ TAG_NAMES = {
     UPDATE_CLIENT_STATE: "update_client_state",
     REFRESH_ONLINE_STATE: "refresh_online_state",
     GAME_CHECK: "game_check",
+    REQ_OFFLINE_CHAT: "req_offline_chat",
+    RET_OFFLINE_CHAT: "ret_offline_chat",
     ENTER_MAP: "enter_map",
     MAIN_PLAYER_CREATE: "main_player_create",
     AOI_ADD: "aoi_add",
@@ -632,6 +642,7 @@ REQUEST_SPECS = {
     VISITOR: {},
     VERFIY: {0: "s", 1: "s", 2: "s"},
     SET_GUILD_BATTLE_MEMBER: {0: "sa"},
+    REQ_OFFLINE_CHAT: {},   # empty request
     LOGIN: {0: "i", 1: "s", 2: "i", 3: "s", 4: "s", 5: "i", 6: "i"},
     CHARACTER_CREATE: {0: "o"},
     CHARACTER_PICK: {0: "i"},
@@ -639,6 +650,9 @@ REQUEST_SPECS = {
     MOVE: {0: "o", 1: "b", 2: "i", 3: "i"},
     CHAT: {0: "i", 1: "s", 2: "s", 3: "i", 4: "i", 5: "ia", 6: "sa"},
     HEART_BEAT: {0: "i", 1: "i"},
+    # ret_offline_chat: chat_list(0) = object array of chat_item; an empty
+    # array means "no offline messages" (what we always reply).
+    RET_OFFLINE_CHAT: {0: "oa"},
     # provisional (no decompiled SprotoType survived for these):
     ACCEPT_MISSION: {0: "i"},
     COMPLETE_MISSION: {0: "i"},

@@ -50,6 +50,8 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             P.UPDATE_CLIENT_STATE: self.h_update_client_state,
             P.GAME_CHECK: self.h_game_check,
             P.RETRIEVE_ACCOUNT: self.h_retrieve_account,
+            # offline chat history (tag 168; fires when the chat panel opens)
+            P.REQ_OFFLINE_CHAT: self.h_req_offline_chat,
             # missions + items
             P.ACCEPT_MISSION: self.h_accept_mission,
             P.COMPLETE_MISSION: self.h_complete_mission,
@@ -540,6 +542,14 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
     async def h_retrieve_account(self, s: Session, msg) -> None:
         # Not supported in the revival (Facebook/Google bind unavailable).
         s.respond(msg, {0: 1})
+
+    async def h_req_offline_chat(self, s: Session, msg) -> None:
+        """req_offline_chat (168) fires when the client's chat panel first
+        opens (PlayerChatHistory.InitOfflineChat). Reply with ret_offline_chat
+        (579) carrying an EMPTY chat_list — the handler iterates it, so an
+        unanswered request just leaves tag 168 'unhandled' in the logs.
+        """
+        s.respond(msg, {0: sproto.encode_object_array([])})
 
     # ------------------------------------------------------------------
     # economy helpers
