@@ -793,7 +793,15 @@ RESPONSE_SPECS = {
     SHOW_DAMAGE_BOARD: {0: "oa"},  # damges: object array of acceptdamge
     DROP_ITEM_INFO: {0: "i", 1: "i", 2: "i", 3: "i", 4: "o", 7: "i"},
     AOI_UPDATE_ATTRIBUTE: {0: "o"},  # character_aoi_attribute blob
-    SYNC_COMMON_DATA: {0: "i", 1: "i", 2: "i", 3: "i"},
+    # sync_common_data (server->client push) real schema (SprotoType.
+    # sync_common_data.request decode switch): serverTime(0) time_offset(2)
+    # daily_mission_refresh_time(3) pvp_scale(4) first_buy(5) big_pack(6)
+    # adfree(7) tips(8) func_info(9: map<string,function_info>) push(10)
+    # guildId(11) seed(12) server_level(13) start_time(14)
+    SYNC_COMMON_DATA: {
+        0: "i", 2: "i", 3: "i", 4: "i", 5: "i", 6: "i", 7: "i", 8: "i",
+        9: "oa", 10: "i", 11: "i", 12: "i", 13: "i", 14: "i",
+    },
     RET_GUILD_CREATE: {0: "i", 1: "i"},
     RET_GUILD_JOIN: {0: "i", 1: "i"},
     RET_GUILD_LEAVE: {0: "i"},
@@ -1093,6 +1101,73 @@ def encode_reward_tips(items: dict, gold: int = 0, diamond: int = 0) -> bytes:
         1: diamond,
         2: _enc.encode_object_array(stacks),
     })
+
+
+# --- sync_common_data (614) --------------------------------------------------
+
+# FUNCTION_TYPE ids that must be unlocked from level 1 (client
+# PlayerCommonData.ResetFunctionUnlockData marks a function unlocked when a
+# func_info entry exists with state 1: IsTutorialCanShow returns false ->
+# SetFunctionUnlockState(true)). Without these the BAG / CHARACTER / GANG /
+# VEHICLE / RANKING buttons stay locked until the tutorial runs.
+UNLOCKED_FUNCTIONS = (
+    3001,  # ACTIVITY
+    3002,  # RANK_PVP
+    3004,  # RANK
+    3005,  # GIFT
+    3006,  # SHOP
+    3007,  # LOTTO
+    3010,  # CAR (vehicle)
+    3011,  # TITLE
+    3012,  # ENHANCE
+    3013,  # SKILL
+    3014,  # CHARACTER
+    3015,  # BAG
+    3016,  # SOCIAL
+    3017,  # GUILD (gang)
+    3018,  # TEAM
+    3019,  # MYSTERYSHOP
+    3020,  # AUTO_FIGHT
+    3030,  # COIN_SHOP
+    100,   # MAIN_MISSION
+    101,   # DAILY_MISSION
+    102,   # CAR_COPY
+    103,   # TOWER_REWARD
+    104,   # SKILL_DRAG
+)
+
+
+def encode_function_info(func_id: int, state: int = 1) -> bytes:
+    """SprotoType.function_info: {ID(0) STRING, state(1) int}. The client's
+    read_map keys the dict on v.ID — the id MUST be the FUNCTION_TYPE value
+    as a string ("3015"), never an integer."""
+    return _enc.encode_object({0: str(func_id), 1: state})
+
+
+def encode_sync_common_data(server_time: int, seed: int,
+                            func_ids=UNLOCKED_FUNCTIONS,
+                            daily_refresh: int = 0) -> dict:
+    """sync_common_data push body FIELDS (field tags per the decode switch).
+    Returned as a dict — the push body is the sync_common_data object itself,
+    not a wrapper (field 0 is serverTime, an integer).
+
+    * serverTime(0): client clocks ServerTime from this on first receipt.
+    * daily_mission_refresh_time(3), pvp_scale(4): 0 defaults are fine.
+    * func_info(9): object array of function_info — drives the function
+      button unlock states AND the tutorial tip suppression.
+    * seed(12): PlayerCommonData.InitRandom(seed) fills randomArray; GetRandom
+      does sendIndex % randomArray.Count — with NO seed pushed the array is
+      empty and the first combat hit throws DivideByZeroException inside
+      CharacterAttributeData.IsDodeg (client crash on attacking an NPC).
+    """
+    func_blobs = [encode_function_info(fid, 1) for fid in func_ids]
+    return {
+        0: server_time,
+        3: daily_refresh,
+        4: 10000,             # pvp_scale: client divides by 10000 -> 1.0
+        9: _enc.encode_object_array(func_blobs),
+        12: seed,
+    }
 
 
 # character_aoi_move {id(0), movement(1), walk(2)}

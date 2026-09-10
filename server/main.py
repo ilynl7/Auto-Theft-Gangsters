@@ -33,6 +33,12 @@ class GameServer:
         self._session_counter += 1
         return self._session_counter
 
+    def next_rng_seed(self) -> int:
+        """Seed for the client's PlayerCommonData.InitRandom (sync_common_data
+        field 12): any non-zero 32-bit value; feeds the combat hit/miss rolls."""
+        import random
+        return random.getrandbits(31)
+
     async def dispatch(self, session: Session, msg) -> None:
         if msg.type is None:
             log.warning("frame without type from %s", session.writer.get_extra_info("peername"))

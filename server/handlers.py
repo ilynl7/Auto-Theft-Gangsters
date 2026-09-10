@@ -361,6 +361,12 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # wait box also hangs. The real flow is: empty response, then the
         # enter_map push drives the scene load.
         s.respond(msg, {})
+        # sync_common_data BEFORE world entry: its seed fills the client's
+        # randomArray (without it the first combat hit throws
+        # DivideByZeroException in GetRandom) and its func_info unlocks the
+        # bag/character/gang/vehicle/ranking buttons from level 1.
+        s.push(P.SYNC_COMMON_DATA, P.encode_sync_common_data(
+            int(time.time()), self.server.next_rng_seed()))
         # baseline syncs right after pick: skills + friends + storage
         self._sync_skills(s, row["id"])
         await self._push_friend_info(s)
@@ -420,6 +426,8 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             "x": row["pos_x"], "y": row["pos_y"],
             "z": row["pos_z"], "o": row["pos_o"],
         }
+        wp.comb_value = W.comb_value_for(self.server.db, row["id"],
+                                         row["level"])
         s.pending_world_player = wp
         s.push(P.ENTER_MAP, {
             0: map_id,          # mapInfoId (string)

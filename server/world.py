@@ -17,7 +17,8 @@ from . import protocol as P
 
 class WorldPlayer:
     __slots__ = ("conn", "char_id", "name", "level", "sex", "profession",
-                 "map_id", "line_index", "pos", "moving", "walk", "dead")
+                 "map_id", "line_index", "pos", "moving", "walk", "dead",
+                 "comb_value")
 
     def __init__(self, conn, char_id: int, name: str, level: int = 1,
                  sex: int = 0, profession: int = 0) -> None:
@@ -33,6 +34,7 @@ class WorldPlayer:
         self.moving = False
         self.walk = True
         self.dead = False
+        self.comb_value = 100 * level
 
     def movement_blob(self) -> bytes:
         return P._enc.encode_object({
@@ -245,10 +247,11 @@ def _runtime_blob(hp: int, exp: int) -> bytes:
     return P._enc.encode_object({6: attr, 7: attr})
 
 
-def _attribute_other_blob(hp: int, exp: int, level: int) -> bytes:
+def _attribute_other_blob(hp: int, exp: int, level: int,
+                          comb_value: int = 0) -> bytes:
     return P._enc.encode_object({
         0: hp, 1: exp, 2: level,
-        3: 0,                 # combValue
+        3: comb_value,        # combValue (combat power shown on the profile)
         4: 0, 5: 0,           # title_level / title_exp
         15: 0,                # camp
         16: 0,                # pkMode
@@ -262,8 +265,8 @@ def _property_blob(gold: int = 0, diamond: int = 0) -> bytes:
                                  17: 0, 18: 0})
 
 
-def _attribute_overview_blob(level: int) -> bytes:
-    return P._enc.encode_object({0: level, 1: 0})
+def _attribute_overview_blob(level: int, comb_value: int = 0) -> bytes:
+    return P._enc.encode_object({0: level, 1: comb_value})
 
 
 def _default_hp(level: int) -> int:
@@ -280,7 +283,8 @@ def encode_character_blob(char_id: int, name: str, level: int,
                           line_index: int = 0,
                           map_id: str = economy.MAIN_CITY_MAP,
                           exp: int = 0, gold: int = 0, diamond: int = 0,
-                          hp: int = None, skills: list = None) -> bytes:
+                          hp: int = None, skills: list = None,
+                          comb_value: int = 0) -> bytes:
     """Full SprotoType.character blob for main_player_create.
 
     The client's ObjInitPlayerData.InitData(character) hard-dereferences
@@ -299,7 +303,7 @@ def encode_character_blob(char_id: int, name: str, level: int,
     fields = {
         0: char_id,
         1: _general_blob(name, profession, line_index, map_id),
-        2: _attribute_other_blob(hp, exp, level),
+        2: _attribute_other_blob(hp, exp, level, comb_value),
         5: _property_blob(gold, diamond),
         6: _visual_blob(profession, name),
         7: pos_blob,
@@ -330,25 +334,30 @@ def encode_character_aoi_blob(char_id: int, name: str, level: int,
         0: char_id,
         1: _visual_blob(profession, name),
         2: _general_blob(name, profession, line_index, map_id),
-        3: _attribute_other_blob(hp, exp, level),
+        3: _attribute_other_blob(hp, exp, level, 100 * level),
         5: pos_blob,
         6: _runtime_blob(hp, exp),
     })
 
 
-def encode_character_overview(row, visual_profession: int = None) -> bytes:
+def encode_character_overview(row, visual_profession: int = None,
+                              comb_value: int = None) -> bytes:
     """SprotoType.character_overview for character_list / character_create.
 
     The client dereferences .general.profession, .attribute_other.level,
     .visual and .createtime on this type (CreateRoleRootLogic /
     ChooseRoleRootLogic), so all four sub-objects must be present.
+    attribute_overview.combValue (field 1) is the combat power the role
+    select screen shows — a rolled base power, not 0.
     """
     profession = row["profession"] if visual_profession is None \
         else visual_profession
+    if comb_value is None:
+        comb_value = 100 * row["level"]
     return P._enc.encode_object({
         0: row["id"],
         1: _general_blob(row["name"], profession),
-        2: _attribute_overview_blob(row["level"]),
+        2: _attribute_overview_blob(row["level"], comb_value),
         3: _visual_blob(profession, row["name"]),
         4: row["created_at"],
         5: 0,                 # forbidden
@@ -368,6 +377,20 @@ def encode_aoi_update_move(player: WorldPlayer) -> bytes:
     move = P.encode_character_aoi_move(player.char_id, player.movement_blob(),
                                        player.walk)
     return P._enc.encode_object({0: move})
+
+
+def comb_value_for(db, char_id: int, level: int) -> int:
+    """Real combat power: base attack + equipped weapon/badge power, scaled
+    like the client's CombValue (atk + hp/10)."""
+    attack = economy.PLAYER_BASE_ATTACK
+    weapon = db.get_equipped(char_id, 0)
+    if weapon is not None:
+        attack += economy.ITEMS.get(weapon, {}).get("power", 0)
+    badge = db.get_equipped(char_id, 2)
+    if badge is not None:
+        attack += economy.ITEMS.get(badge, {}).get("power", 0)
+    hp = db.get_hp(char_id)[1]
+    return attack * 10 + hp // 10 + level
 
 
 def encode_main_player_create(player: WorldPlayer,
@@ -392,7 +415,8 @@ def encode_main_player_create(player: WorldPlayer,
     character = encode_character_blob(
         player.char_id, player.name, player.level, player.movement_blob(),
         profession=player.profession, line_index=player.line_index,
-        map_id=player.map_id, skills=skills)
+        map_id=player.map_id, skills=skills,
+        comb_value=getattr(player, "comb_value", 0))
     return {
         0: character,
         1: player.movement_blob(),
