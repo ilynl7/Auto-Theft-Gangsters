@@ -81,8 +81,12 @@ async def test_shop_list_and_buy(server):
     assert srv.db.get_item_count(char_id, good["item_id"]) == \
         item_before + good["count"]
 
-    # buying more than the balance can afford must fail with errno 3
-    resp = await c.rpc(P.BUY_SHOP_ITEM, {0: good["goods_id"], 1: 100000})
+    # buying more than the balance can afford must fail with errno 3.
+    # New test characters start with a maxed wallet (TEST_START_GOLD), so
+    # drain it first to actually hit the insufficient-funds path.
+    srv.db.add_currency(char_id, economy.CURRENCY_GOLD,
+                        -srv.db.get_currency(char_id, economy.CURRENCY_GOLD))
+    resp = await c.rpc(P.BUY_SHOP_ITEM, {0: good["goods_id"], 1: 1})
     assert resp.body[0] == 3
 
     await c.close()

@@ -91,12 +91,17 @@ async def test_combat_kills_npc_and_grants_loot(server):
     db.set_equipped(char_id, 0, 12)
     gold_before = db.get_currency(char_id, economy.CURRENCY_GOLD)
 
-    # attack until the NPC dies (its hp is server-side)
-    for _ in range(50):
-        resp = await c.rpc(P.ATTACK_LOCAL_NPC, {0: npc.npc_id, 1: 3})
-        if npc.hp == 0:
-            break
-    assert npc.hp == 0, "NPC must die after enough hits"
+    # Real client flow: attack_local_npc (flavor, no npc id on the wire —
+    # the request is {damge, effinfoId}), then the client kills the NPC
+    # locally and reports it via local_npc_die {npcid STRING, x, z, type}.
+    kind_id = economy.NPC_KINDS[npc.kind]["npcdataid"]
+    resp = await c.rpc(P.ATTACK_LOCAL_NPC, {0: 50, 1: "3"})
+    assert resp.body[0] == 0
+    resp = await c.rpc(P.LOCAL_NPC_DIE,
+                       {0: kind_id, 1: 30000, 2: 30000, 3: 0})
+    assert resp.body[0] == 0
+    # the world NPC is killed and lazily respawned for the next fight
+    assert npc.hp == npc.max_hp and not npc.dead
 
     row = db.get_character(char_id)
     assert row["exp"] > 0

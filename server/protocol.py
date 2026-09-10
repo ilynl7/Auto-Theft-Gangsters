@@ -212,6 +212,13 @@ RANK_PVP_REWARD = 545
 RANK_PVP_CREATE_ZOMBIE_USER = 544
 REQUEST_RANK_PVP_DATA = 210
 REQUEST_RANK_PVP_HISTORY = 211
+# general (non-pvp) top rank list: character level / fight power rankings
+REQUEST_TOP_RANK_LIST = 191
+RET_TOP_RANK_LIST = 598
+# activity/special big packs (shop bundles, recharge packs) — request is empty
+REQUEST_SPECIAL_BIG_PACK = 274
+RET_SPECIAL_BIG_PACK = 656
+# activity 
 TIANTI_REQ_WIN_COUNT_REWARDS = 157
 TIANTTI_RESULT = 551
 REAL_PVP_REGISTER = 138
@@ -555,6 +562,10 @@ TAG_NAMES = {
     SYNC_DANCE_STATE_INFO: "sync_dance_state_info",
     REQUEST_GUILD_MAP_INFO: "request_guild_map_info",
     RET_REQUEST_GUILD_MAP_INFO: "ret_request_guild_map_info",
+    REQUEST_TOP_RANK_LIST: "request_top_rank_list",
+    RET_TOP_RANK_LIST: "ret_top_rank_list",
+    REQUEST_SPECIAL_BIG_PACK: "request_special_big_pack",
+    RET_SPECIAL_BIG_PACK: "ret_special_big_pack",
 }
 
 
@@ -675,8 +686,13 @@ REQUEST_SPECS = {
     CHANGE_ITEM_STATE: {0: "i", 1: "i"},
     SKILL_USE: {0: "i", 1: "i"},   # skill id, target id
     ACCEPT_DAMGE: {0: "oa"},   # damges: object array of acceptdamge
-    LOCAL_NPC_DIE: {0: "i"},       # npc id
-    ATTACK_LOCAL_NPC: {0: "i", 1: "i"},      # npc id, skill id
+    # local_npc_die.request (decompiled): npcid(0) STRING, x(1) i, z(2) i,
+    # type(3) i — the client kills NPCs locally and reports the death, so the
+    # int-only spec caused 'read invalid integer size (3)' on every kill.
+    LOCAL_NPC_DIE: {0: "s", 1: "i", 2: "i", 3: "i"},
+    # attack_local_npc.request (decompiled): damge(0) i, effinfoId(1) s —
+    # it carries NO npc id; damage is applied server-side only as flavor.
+    ATTACK_LOCAL_NPC: {0: "i", 1: "s"},
     RELIFE_PLAYER: {},
     # guilds (provisional)
     GUILD_CREATE: {0: "s"},                        # name
@@ -853,6 +869,11 @@ RESPONSE_SPECS = {
     COUNT_DOWN: {0: "i"},
     RET_REQUEST_RANDOM_RANK_PVP_OPPONENT: {0: "s", 1: "i", 2: "i"},
     RET_REQUEST_TOP_RANK_PVP_LIST: {0: "oa"},
+    # ret_top_rank_list: sort_items(0: array of sort_item) + sortType(1: i)
+    RET_TOP_RANK_LIST: {0: "oa", 1: "i"},
+    # ret_special_big_pack: map of special_big_pack keyed by ID — sent as an
+    # object at tag 0 (client: read_map((v) => v.ID))
+    RET_SPECIAL_BIG_PACK: {0: "oa"},
     SYN_RANK_PVP_DATA: {0: "i", 1: "i", 2: "i"},
     RANK_PVP_START: {0: "s", 1: "i", 2: "i"},
     RANK_PVP_REWARD: {0: "i", 1: "i"},
@@ -928,6 +949,8 @@ RESPONSE_ALIASES = {
     REQUEST_RANK_PVP_DATA: SYN_RANK_PVP_DATA,
     REQUEST_RANDOM_RANK_PVP_OPPONENT: RET_REQUEST_RANDOM_RANK_PVP_OPPONENT,
     REQUEST_TOP_RANK_PVP_LIST: RET_REQUEST_TOP_RANK_PVP_LIST,
+    REQUEST_TOP_RANK_LIST: RET_TOP_RANK_LIST,
+    REQUEST_SPECIAL_BIG_PACK: RET_SPECIAL_BIG_PACK,
     TIANTI_REQ_WIN_COUNT_REWARDS: TIANTTI_RESULT,
     REQUEST_TOWER_COPY_INFO: RET_REQUEST_TOWER_COPY_INFO,
     ENTER_TOWER_COPY_INFO: RET_REQUEST_TOWER_COPY_INFO,
@@ -1320,6 +1343,36 @@ def encode_aoi_update_attribute(char_id: int, hp: int, exp: int,
 def encode_npc_create(npc) -> bytes:
     """npc_create push body: {npc(0)}."""
     return _enc.encode_object({0: npc})
+
+
+def encode_gameitem(index_id: int, item_id: int, stack: int = 1,
+                    quality: int = 2, level: int = 0,
+                    bind: bool = True,
+                    random_attris: list = None) -> bytes:
+    """SprotoType.gameitem, the REAL inventory element (decode() switch):
+    indexId(0) i, itemId(1) STRING, bindflag(2) b, level(3) i, flags(4) i,
+    stack(5) i, quality(6) i, parm(7) int-list, appraise(8) i,
+    random_attri(9) map<index, random_attri>, inlay(10) map.
+
+    quality is EQUIP_QUALITY: -1=INVALID 0=BLACK 1=WHITE(1-star) 2=GREEN
+    3=BLUE 4=PURPLE 5=YELLOW 6=RED. random_attris is an [(index, id, value)]
+    list; random_attri: index(0) i, id(1) i, value(2) i, quality(3) i,
+    skillId(4) s, qualityId(5) s.
+    """
+    fields = {
+        0: index_id,
+        1: str(item_id),
+        2: 1 if bind else 0,
+        3: level,
+        4: 0,
+        5: stack,
+        6: quality,
+    }
+    if random_attris:
+        attr_blobs = [_enc.encode_object({0: idx, 1: aid, 2: val})
+                      for idx, aid, val in random_attris]
+        fields[9] = _enc.encode_object_array(attr_blobs)
+    return _enc.encode_object(fields)
 
 
 def encode_skill_info(skill_id: int, level: int) -> bytes:

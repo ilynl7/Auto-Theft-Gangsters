@@ -29,6 +29,9 @@ DB_PATH = os.environ.get("ATG_DB_PATH", "atg_server.db")
 
 GAME_VERSION = "1.012.017"
 DATA_VERSION = "1.012.017"
+# login.response.dataVersionCode is int.Parse'd by the client
+# (NetManager.IsVersionSame) — it must be a plain integer, not dotted.
+DATA_VERSION_INT = "1012"
 UNITY_VERSION = "Unity4.7"
 SERVER_ID = 1
 SERVER_NAME = os.environ.get("ATG_SERVER_NAME", "Revival-1")

@@ -133,6 +133,8 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             P.RANK_PVP_PLAYER_ATTACK: self.h_rank_pvp_player_attack,
             P.RANK_PVP_OTHER_PLAYER_DIE: self.h_rank_pvp_other_player_die,
             P.REQUEST_TOP_RANK_PVP_LIST: self.h_request_top_rank_pvp_list,
+            P.REQUEST_TOP_RANK_LIST: self.h_request_top_rank_list,
+            P.REQUEST_SPECIAL_BIG_PACK: self.h_request_special_big_pack,
             P.REQUEST_RANK_PVP_DATA: self.h_request_rank_pvp_data,
             P.REQUEST_RANK_PVP_HISTORY: self.h_request_rank_pvp_history,
             P.TIANTI_REQ_WIN_COUNT_REWARDS: self.h_tianti_rewards,
@@ -286,10 +288,13 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         log.info("login account %s logintype=%s", account_id,
                  msg.body.get(2))
         # response {type(0), versionCode(1), dataVersionCode(2), serverLevel(3)}
+        # IsVersionSame does int.Parse(dataVersionCode) — it must be a plain
+        # integer string, not a dotted version (a dotted value throws
+        # FormatException inside LoginResponse and the login dies silently).
         s.respond(msg, {
             0: P.LOGIN,
             1: config.GAME_VERSION,
-            2: config.DATA_VERSION,
+            2: config.DATA_VERSION_INT,
             3: 0,
         })
 
@@ -327,18 +332,30 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
                 profession = prof2
         if not name:
             name = "Gangster%d" % (self.server.next_session() % 100000)
-        row = self.server.db.create_character(s.account_id or 0, name, sex=sex,
-                                              profession=profession)
+        # Testing build: every new character starts at the max level with
+        # maxed gold/diamond so all content is reachable immediately.
+        row = self.server.db.create_character(
+            s.account_id or 0, name, sex=sex, profession=profession,
+            level=economy.TEST_MAX_LEVEL,
+            extra={"gold": economy.TEST_START_GOLD,
+                   "diamond": economy.TEST_START_DIAMOND})
         if row is None:
             s.respond(msg, {1: 1})  # errno: name taken
             return
-        # grant the profession's starting weapon (tier 1 of its class) and
-        # its real skill group (economy.PROFESSIONS[prof].skills)
+        # grant the profession's starting weapon (tier 1 of its class), a
+        # full star-1 gear set with random stats, and the class's real skill
+        # group (economy.PROFESSIONS[prof].skills)
         prof_def = economy.PROFESSIONS[profession]
         start_weapon = (profession + 1) * 10000 + 1
         if start_weapon in economy.ITEMS:
             self.server.db.add_item(row["id"], start_weapon, 1)
             self.server.db.set_equipped(row["id"], 0, start_weapon)
+        # Star-1 (EQUIP_QUALITY.KUANG_WHITE = 1) gear set with rolled random
+        # attributes — the "random stats" the real game gives new characters.
+        for slot, item_id in economy.STARTER_GEAR:
+            if item_id in economy.ITEMS:
+                self.server.db.add_item(row["id"], item_id, 1)
+                self.server.db.set_equipped(row["id"], slot, item_id)
         for skill_id in prof_def["skills"]:
             self.server.db.learn_skill(row["id"], skill_id)
         # character_create.response {character(0), errno(1)} — the client
@@ -440,9 +457,18 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         })
         # main_player_create must arrive together with enter_map: the client
         # cannot send map_ready until the main player exists.
+        # Equipped gear rides along as the character.equip gameitem map so
+        # the spawn handler SyncPacks it into the client's EQUIPPACK.
+        equips = []
+        for slot, item_id in self.server.db.list_equipped(wp.char_id):
+            # (indexId, itemId, quality, level, random_attrs) - indexId must
+            # be non-zero (0 is the client's "unknown" sentinel).
+            equips.append((slot + 1, item_id, economy.STARTER_QUALITY, 0,
+                           economy.roll_random_attrs(2)))
         s.push(P.MAIN_PLAYER_CREATE, W.encode_main_player_create(
             wp, skills=[(r["skill_id"], r["level"])
-                        for r in self.server.db.list_skills(wp.char_id)]))
+                        for r in self.server.db.list_skills(wp.char_id)],
+            equips=equips))
 
     async def h_enter_map(self, s: Session, msg) -> None:
         # Legacy request form (tests / reconnect helpers). The real client
@@ -1082,87 +1108,122 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             {0: skill_id, 1: wp.char_id}, exclude=None)
 
     async def h_attack_local_npc(self, s: Session, msg) -> None:
-        db = self.server.db
+        """attack_local_npc(317) — client-side combat flavor: {damge(0) i,
+        effinfoId(1) s}. The client kills NPCs locally; this only shows the
+        damage board and lets the NPC fight back. The kill itself arrives
+        via local_npc_die(307)."""
         wp = s.world_player
         if wp is None:
             return
-        npc_id = msg.body.get(0)
-        skill_id = msg.body.get(1, 1)
-        npc = self.server.world.get_npc(wp.map_id, npc_id)
-        if npc is None:
-            s.respond(msg, {0: 2})   # unknown
-            return
-        if npc.dead:
-            # lazy respawn: the NPC is back at full strength for this fight
-            self.server.world.respawn_npc(npc)
-        skill = economy.SKILLS.get(skill_id, {"damage": 5})
-        skill_level = db.get_skill(wp.char_id, skill_id)
-        if skill_level is not None:
-            skill = dict(skill)
-            skill["damage"] += 5 * (skill_level["level"] - 1)
-        attack = self._player_attack_power(wp.char_id)
-        damage = attack + skill["damage"]
-        npc.hp = max(0, npc.hp - damage)
-        # damage popup to everyone on the map — show_damage_board carries
-        # an object array of acceptdamge at tag 0 (client: request.damges)
-        self.server.world.broadcast(
-            wp.map_id, P.SHOW_DAMAGE_BOARD,
-            {0: P.encode_damage_board([P.encode_acceptdamge(
-                npc_id, damage, str(skill_id))])})
-        if npc.hp > 0:
-            s.respond(msg, {0: 0})
-            # the NPC fights back
-            hp, max_hp = db.get_hp(wp.char_id)
-            counter = self.server.world.npc_attack(npc)
-            hp = db.set_hp(wp.char_id, hp - counter)
+        damage = msg.body.get(0, 0)
+        effinfo_id = msg.body.get(1, "")
+        if isinstance(effinfo_id, bytes):
+            effinfo_id = effinfo_id.decode("utf-8", "replace")
+        if damage:
             self.server.world.broadcast(
-                wp.map_id, P.ACCEPT_DAMGE,
+                wp.map_id, P.SHOW_DAMAGE_BOARD,
                 {0: P.encode_damage_board([P.encode_acceptdamge(
-                    wp.char_id, counter)])})
-            if hp <= 0:
-                wp.dead = True
-                # notice_relife_player: type(0) int, cost(1) int,
-                # itemId(2) STRING, characterid(3) int, name(4) STRING.
-                # The client dereferences GetItemDataByID(itemId).BackPackIcon,
-                # so a valid (string) item id is mandatory — the revive
-                # potion row from ItemData.
-                self.server.world.broadcast(
-                    wp.map_id, P.NOTICE_RELIFE_PLAYER,
-                    {0: 1, 1: 0, 2: "9011", 3: wp.char_id, 4: wp.name})
-            return
-        # --- npc died ---
-        exp, gold, drops = self.server.world.kill_npc(npc, wp.char_id, wp.name)
-        # local_npc_die.npcid is a STRING on the client (read_string) — send
-        # the npc's NpcData row id, which is also what FindObjInScene keys on
-        # via ObjInitNpcData (mServerID is the int id; the death lookup uses
-        # the row id, matching what npc_create carried).
-        self.server.world.broadcast(
-            wp.map_id, P.LOCAL_NPC_DIE,
-            {0: economy.NPC_KINDS[npc.kind]["npcdataid"], 3: 0})
+                    wp.char_id, damage, str(effinfo_id))])})
         s.respond(msg, {0: 0})
+
+    async def h_local_npc_die(self, s: Session, msg) -> None:
+        """local_npc_die(307) — the client kills NPCs locally and reports the
+        death: {npcid(0) STRING, x(1) i, z(2) i, type(3) i}. This is the REAL
+        kill path: grant exp/gold/loot, count mission kills, and lazily
+        respawn the NPC for the next fight.
+        """
+        db = self.server.db
+        wp = s.world_player
+        row = self._require_char(s)
+        if wp is None or row is None:
+            s.respond(msg, {0: 1})
+            return
+        npcid = msg.body.get(0, "")
+        if isinstance(npcid, bytes):
+            npcid = npcid.decode("utf-8", "replace")
+        die_type = msg.body.get(3, 0)
+        # Find the world NPC by NpcData row id (what npc_create carried) or
+        # by its int server id as a fallback.
+        npc = None
+        for cand in self.server.world.npcs_in(wp.map_id):
+            if economy.NPC_KINDS[cand.kind]["npcdataid"] == npcid \
+                    or str(cand.npc_id) == npcid:
+                npc = cand
+                break
+        # Legacy/unknown ids (tutorial scene kills, ragdoll impacts) still get
+        # a base reward — otherwise the kill silently does nothing.
+        if npc is not None:
+            exp, gold, drops = self.server.world.kill_npc(
+                npc, wp.char_id, wp.name)
+            self.server.world.respawn_npc(npc)
+        else:
+            base = economy.NPC_KINDS[1]
+            exp, gold, drops = base["exp"], base["gold"], {}
         for item_id, cnt in drops.items():
             db.add_item(wp.char_id, item_id, cnt)
             self.server.world.broadcast(
                 wp.map_id, P.DROP_ITEM_INFO,
-                {0: P.encode_drop_item_info(npc_id, item_id, cnt,
-                                            npc.pos["x"], npc.pos["z"])})
+                {0: P.encode_drop_item_info(
+                    npc.npc_id if npc else 0, item_id, cnt,
+                    msg.body.get(1, 0) / 100.0, msg.body.get(2, 0) / 100.0)})
         if gold:
             db.add_currency(wp.char_id, economy.CURRENCY_GOLD, gold)
         level, exp_left = db.add_exp(wp.char_id, exp)
         gold_total = db.get_currency(wp.char_id, economy.CURRENCY_GOLD)
         hp, max_hp = db.get_hp(wp.char_id)
         # aoi_update_attribute is the client's real exp/level/hp/money sync
-        # (ExpLineRootLogic.UpdateExp); sync_common_data is serverTime state
-        # and must NOT carry level/exp.
+        # (ExpLineRootLogic.UpdateExp).
         s.push(P.AOI_UPDATE_ATTRIBUTE, {0: P.encode_aoi_update_attribute(
             wp.char_id, hp, exp_left, level, max_hp, gold_total)})
         self._sync_backpack(s, wp.char_id)
-        log.info("char %d killed npc %d (exp +%d gold +%d)", wp.char_id,
-                 npc_id, exp, gold)
+        # Count the kill towards active kill-type missions (main-chain
+        # KILL_TARGET_NPC/KILLMONSTER and side missions). The client matches
+        # missionData.Target against the dying NPC's NpcData row id.
+        self._progress_kill_missions(s, wp.char_id, npcid)
+        # Echo the death to the rest of the map so other clients see the kill.
+        self.server.world.broadcast(
+            wp.map_id, P.LOCAL_NPC_DIE,
+            {0: npcid, 1: msg.body.get(1, 0), 2: msg.body.get(2, 0),
+             3: die_type}, exclude=wp.char_id)
+        s.respond(msg, {0: 0})
+        log.info("char %d npc die npcid=%s type=%s (exp +%d gold +%d)",
+                 wp.char_id, npcid, die_type, exp, gold)
 
-    async def h_local_npc_die(self, s: Session, msg) -> None:
-        # client-confirmed npc death (copy scenes); treat as an attack result
-        await self.h_attack_local_npc(s, msg)
+    def _progress_kill_missions(self, s: Session, char_id: int,
+                                npcid: str) -> None:
+        """Advance active kill-type missions whose target is this NPC.
+
+        Main-chain missions use MISSION_LOGICTYPE KILLMONSTER(1)/
+        LOCAL_KILL_MONSTER(14)/KILL_TARGET_NPC(23) and match
+        missionData.Target against the dying NPC's NpcData row id.
+        """
+        changed = False
+        for mrow in self.server.db.list_missions(char_id):
+            if mrow["state"] != 0:
+                continue
+            mid = str(mrow["mission_id"])
+            mdef = M.MAIN_MISSIONS.get(mid)
+            if mdef is not None:
+                logic_type = mdef.get("logic_type")
+                if logic_type not in (1, 14, 23):
+                    continue
+                target = mdef.get("target")
+            else:
+                sdef = economy.MISSIONS.get(mid)
+                if not sdef or sdef.get("type") != "kill":
+                    continue
+                target = sdef.get("npc_id")
+            if target is not None and str(target) != str(npcid):
+                continue
+            mrow2 = self.server.db.get_mission(char_id, mrow["mission_id"])
+            if mrow2 is None or mrow2["state"] != 0:
+                continue
+            progress = mrow2["progress"] + 1
+            self.server.db.set_mission_progress(
+                char_id, mrow["mission_id"], progress, 1)
+            changed = True
+        if changed:
+            self._sync_missions(s, char_id)
 
     async def h_accept_damage(self, s: Session, msg) -> None:
         wp = s.world_player

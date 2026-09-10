@@ -258,6 +258,15 @@ class Database:
                 (account_id, name, level, sex, profession,
                  json.dumps(extra), now),
             )
+            # Testing build: maxed starting wallets (TEST_START_GOLD /
+            # TEST_START_DIAMOND from economy) land in the currency columns.
+            if extra.get("gold") or extra.get("diamond"):
+                self._conn.execute(
+                    "UPDATE characters SET gold = COALESCE(gold, 0) + ?,"
+                    " diamond = COALESCE(diamond, 0) + ? WHERE id = ?",
+                    (int(extra.get("gold") or 0),
+                     int(extra.get("diamond") or 0), cur.lastrowid),
+                )
             self._conn.commit()
         except sqlite3.IntegrityError:
             return None  # duplicate name

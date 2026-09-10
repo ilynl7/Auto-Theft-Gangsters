@@ -21,6 +21,13 @@ from .game_data import WEAPONS as REAL_WEAPONS
 # The main city (scene DSJ_GTA) is map id 11.
 MAIN_CITY_MAP = "11"
 
+# --- testing build --------------------------------------------------------
+# Every new character starts maxed out so all content is reachable while
+# testing (user request: level 80, huge gold/diamond wallets).
+TEST_MAX_LEVEL = 80
+TEST_START_GOLD = 99_999_999
+TEST_START_DIAMOND = 999_999
+
 # --- items -----------------------------------------------------------------
 # item_id -> {"name", "type", "slot", "price"(gold), "power"}
 # type: "consumable" | "equipment" | "badge" | "fashion" | "package"
@@ -229,6 +236,40 @@ NPC_SPAWNS = {
 PLAYER_BASE_ATTACK = 12
 PLAYER_BASE_HP = 100
 RESPAWN_HP_FRACTION = 1.0
+
+# Star-1 starter gear set: [(equip_slot, item_id)] granted on character
+# creation. Slot 0 weapon comes from the profession's tier-1 weapon.
+STARTER_GEAR = [
+    (1, 3),    # Body Armor (slot 1)
+    (2, 20),   # Badge of Strength (slot 2)
+]
+
+# EQUIP_QUALITY.KUANG_WHITE - the 1-star quality for starter gear.
+STARTER_QUALITY = 1
+
+# Random attribute roll ranges for freshly created gear (gameitem
+# random_attri entries): (attr_id, min, max). Attr ids follow the client's
+# ATTRIBUTE_TYPE ids; the character screen just lists whatever arrives.
+RANDOM_ATTR_POOL = [
+    (1, 5, 20),     # atk
+    (2, 5, 20),     # def
+    (3, 20, 100),   # hp
+    (4, 1, 5),      # hit
+    (5, 1, 5),      # eva
+    (6, 1, 3),      # cri
+]
+
+
+def roll_random_attrs(count: int = 2, rng=None):
+    """Roll `count` random attributes from RANDOM_ATTR_POOL.
+
+    Returns [(index, attr_id, value)] for gameitem.random_attri.
+    """
+    import random as _random
+    rng = rng or _random
+    pool = rng.sample(RANDOM_ATTR_POOL, min(count, len(RANDOM_ATTR_POOL)))
+    return [(i, aid, rng.randint(lo, hi))
+            for i, (aid, lo, hi) in enumerate(pool)]
 
 # skills: real per-class skill groups from SkillData merged over the legacy
 # generic set

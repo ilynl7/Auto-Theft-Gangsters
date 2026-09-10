@@ -396,6 +396,37 @@ class PvpHandlersMixin:
                  for r in rows]
         s.respond(msg, {0: sproto.encode_object_array(blobs)})
 
+    async def h_request_top_rank_list(self, s: Session, msg) -> None:
+        """request_top_rank_list(191) -> ret_top_rank_list(598).
+
+        Client sends {sortType(0): i}; we answer with the top characters
+        sorted by level as sort_item entries (id/score/name/profession).
+        """
+        db = self.server.db
+        sort_type = msg.body.get(0, 0)
+        rows = db._conn.execute(
+            "SELECT id, name, level, profession FROM characters "
+            "ORDER BY level DESC, exp DESC LIMIT 10"
+        ).fetchall()
+        blobs = [sproto.encode_object({
+            0: r["id"],
+            1: r["level"],
+            2: r["name"],
+            3: r["profession"],
+            4: str(r["level"]),
+        }) for r in rows]
+        s.respond(msg, {0: sproto.encode_object_array(blobs),
+                        1: sort_type})
+
+    async def h_request_special_big_pack(self, s: Session, msg) -> None:
+        """request_special_big_pack(274) -> ret_special_big_pack(656).
+
+        No shop bundles are active on this server: answer with an empty
+        special_big_pack map so the client's purchase UI can open instead
+        of hanging.
+        """
+        s.respond(msg, {0: sproto.encode_object_array([])})
+
     async def h_tianti_rewards(self, s: Session, msg) -> None:
         """tianti_req_win_count_rewards — pay per 5 cumulative wins."""
         db = self.server.db

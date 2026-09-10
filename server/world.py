@@ -284,7 +284,8 @@ def encode_character_blob(char_id: int, name: str, level: int,
                           map_id: str = economy.MAIN_CITY_MAP,
                           exp: int = 0, gold: int = 0, diamond: int = 0,
                           hp: int = None, skills: list = None,
-                          comb_value: int = 0) -> bytes:
+                          comb_value: int = 0,
+                          equips: list = None) -> bytes:
     """Full SprotoType.character blob for main_player_create.
 
     The client's ObjInitPlayerData.InitData(character) hard-dereferences
@@ -314,6 +315,14 @@ def encode_character_blob(char_id: int, name: str, level: int,
         skill_blobs = [P.encode_skill_info(sid, lvl) for sid, lvl in skills]
         fields[8] = P._enc.encode_object_array(skill_blobs)
         fields[16] = 0        # skill_index: hard-dereferenced by InitData
+    if equips:
+        # character.equip(9): map<indexId, gameitem> of EQUIPPACK items.
+        # The client SyncPacks these into its EQUIPPACK container at spawn,
+        # which is what puts the gear on the character's back.
+        equip_blobs = [P.encode_gameitem(idx, iid, stack=1, quality=q,
+                                         level=lvl, random_attris=attrs)
+                       for idx, iid, q, lvl, attrs in equips]
+        fields[9] = P._enc.encode_object_array(equip_blobs)
     return P._enc.encode_object(fields)
 
 
@@ -394,7 +403,8 @@ def comb_value_for(db, char_id: int, level: int) -> int:
 
 
 def encode_main_player_create(player: WorldPlayer,
-                              skills: list = None) -> dict:
+                              skills: list = None,
+                              equips: list = None) -> dict:
     """Field dict for the main_player_create PUSH body:
     {character(0), movement(1)}.
 
@@ -415,7 +425,7 @@ def encode_main_player_create(player: WorldPlayer,
     character = encode_character_blob(
         player.char_id, player.name, player.level, player.movement_blob(),
         profession=player.profession, line_index=player.line_index,
-        map_id=player.map_id, skills=skills,
+        map_id=player.map_id, skills=skills, equips=equips,
         comb_value=getattr(player, "comb_value", 0))
     return {
         0: character,
