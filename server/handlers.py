@@ -11,6 +11,7 @@ import time
 
 from . import config
 from . import economy
+from . import mission_data as M
 from . import protocol as P
 from . import sproto
 from . import world as W
@@ -367,8 +368,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # bag/character/gang/vehicle/ranking buttons from level 1.
         s.push(P.SYNC_COMMON_DATA, P.encode_sync_common_data(
             int(time.time()), self.server.next_rng_seed()))
-        # baseline syncs right after pick: skills + friends + storage
+        # baseline syncs right after pick: skills + friends + storage +
+        # the mission list (auto-accepts the tutorial main mission on new
+        # accounts so the client has something to track from level 1)
         self._sync_skills(s, row["id"])
+        self._ensure_first_mission(s, row["id"])
         await self._push_friend_info(s)
         rows_storage = self.server.db.list_storage(row["id"])
         s.push(P.RET_REQUEST_UPDATE_STORAGEPACK,
@@ -496,10 +500,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
     def _progress_visit_missions(self, s: Session, char_id: int,
                                  map_id: str) -> None:
         """Advance active 'visit' missions whose target map the player entered."""
+        changed = False
         for row in self.server.db.list_missions(char_id):
             if row["state"] != 0:
                 continue
-            mdef = economy.MISSIONS.get(row["mission_id"])
+            mdef = economy.MISSIONS.get(str(row["mission_id"]))
             if not mdef or mdef.get("type") != "visit":
                 continue
             if str(mdef.get("map_id")) != str(map_id):
@@ -507,9 +512,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             target = mdef.get("count", 1)
             progress = min(row["progress"] + 1, target)
             self.server.db.set_mission_progress(
-                char_id, row["mission_id"], progress,
+                char_id, str(row["mission_id"]), progress,
                 1 if progress >= target else 0)
-        self._sync_missions(s, char_id)
+            changed = True
+        if changed:
+            self._sync_missions(s, char_id)
 
     async def h_chat(self, s: Session, msg) -> None:
         wp = s.world_player
@@ -575,11 +582,14 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         db = self.server.db
         gold = reward.get("gold", 0)
         diamond = reward.get("diamond", 0)
+        exp = reward.get("exp", 0)
         items = reward.get("items", {})
         if gold:
             db.add_currency(char_id, economy.CURRENCY_GOLD, gold)
         if diamond:
             db.add_currency(char_id, economy.CURRENCY_DIAMOND, diamond)
+        if exp:
+            db.add_exp(char_id, exp)
         for item_id, count in items.items():
             db.add_item(char_id, item_id, count)
         stacks = [P.encode_item_stack(int(k), v)
@@ -591,10 +601,54 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         })
 
     def _sync_missions(self, s: Session, char_id: int) -> None:
+        """sync_mission(519) push with the real map<string, ownmission> body.
+
+        last_missionId carries the highest *reached* main mission: when the
+        active main mission is not in the map (e.g. after completion) the
+        client auto-accepts its NextID from its local MissionData table —
+        the chain advances even for client-tracked logic (level-up, copies).
+        """
         rows = self.server.db.list_missions(char_id)
-        blobs = [P.encode_mission_state(r["mission_id"], r["progress"],
-                                        r["state"]) for r in rows]
-        s.push(P.SYNC_MISSION, {0: sproto.encode_object_array(blobs)})
+        blobs = []
+        for r in rows:
+            state = P.MISSION_COMPLETE if r["state"] == 1 \
+                else P.MISSION_ACCEPTED
+            # parm: [0]=kill/progress count, [7]=mission change time
+            parm = [0] * 8
+            parm[0] = r["progress"]
+            parm[7] = r["accepted_at"]
+            blobs.append(P.encode_ownmission(r["mission_id"], state, parm))
+        last = self._last_main_mission(char_id)
+        s.push(P.SYNC_MISSION, P.encode_sync_mission(blobs, last))
+
+    def _last_main_mission(self, char_id: int) -> str:
+        """Highest main-chain mission this character has reached."""
+        mid = self.server.db.get_progress(char_id, "main_mission")
+        return str(mid) if mid else M.first_main_mission()
+
+    def _advance_main_chain(self, char_id: int) -> None:
+        """Seed the main-chain cursor at the first mission (new accounts)."""
+        cur = self._last_main_mission(char_id)
+        if not self.server.db.get_progress(char_id, "main_mission"):
+            self.server.db.set_progress(char_id, "main_mission",
+                                        int(M.first_main_mission()))
+
+    def _ensure_first_mission(self, s: Session, char_id: int) -> None:
+        """Auto-accept the first main mission (tutorial kill) on new accounts
+        and push the initial sync_mission so the tutorial car task exists."""
+        for row in self.server.db.list_missions(char_id):
+            if M.is_main_mission(str(row["mission_id"])):
+                return
+        first = M.first_main_mission()
+        if self.server.db.accept_mission(char_id, first, int(time.time())):
+            self.server.db.set_progress(char_id, "main_mission", int(first))
+            self._sync_missions(s, char_id)
+
+    def _push_mission_state(self, s: Session, mission_id: str,
+                            state: int) -> None:
+        """set_mission_state(523) — targeted single-mission state change."""
+        s.push(P.SET_MISSION_STATE,
+               P.encode_set_mission_state(mission_id, state))
 
     def _sync_backpack(self, s: Session, char_id: int) -> None:
         rows = self.server.db.list_items(char_id)
@@ -604,90 +658,116 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
     def _check_auto_complete(self, s: Session, char_id: int,
                              mission_row) -> None:
         """Flip a mission to 'complete' when its progress target is met."""
-        mdef = economy.MISSIONS.get(mission_row["mission_id"])
+        mdef = economy.MISSIONS.get(str(mission_row["mission_id"]))
         if mdef is None or mission_row["state"] != 0:
             return
         target = mdef.get("count", 1)
         if mission_row["progress"] >= target:
             self.server.db.set_mission_progress(
-                char_id, mission_row["mission_id"], mission_row["progress"], 1)
-
+                char_id, str(mission_row["mission_id"]),
+                mission_row["progress"], 1)
     def _progress_buy_missions(self, s: Session, char_id: int,
                                item_id: int, count: int) -> None:
-        """Advance any active 'buy' missions matching a shop purchase."""
+        """Legacy side-mission progression (buy-type missions)."""
+        changed = False
         for row in self.server.db.list_missions(char_id):
             if row["state"] != 0:
                 continue
-            mdef = economy.MISSIONS.get(row["mission_id"])
+            mdef = economy.MISSIONS.get(str(row["mission_id"]))
             if not mdef or mdef.get("type") != "buy" or mdef.get("item_id") != item_id:
                 continue
             progress = min(row["progress"] + count, mdef.get("count", 1))
             self.server.db.set_mission_progress(
-                char_id, row["mission_id"], progress,
+                char_id, str(row["mission_id"]), progress,
                 1 if progress >= mdef.get("count", 1) else 0)
-        self._sync_missions(s, char_id)
+            changed = True
+        if changed:
+            self._sync_missions(s, char_id)
 
     # ------------------------------------------------------------------
-    # missions
+    # missions (real protocol: string mission ids + ret_* RPC responses)
     # ------------------------------------------------------------------
+    @staticmethod
+    def _norm_mission_id(raw) -> str:
+        """accept/complete/abandon requests carry the id as a STRING."""
+        if isinstance(raw, bytes):
+            return raw.decode("utf-8", "replace")
+        return str(raw)
+
     async def h_accept_mission(self, s: Session, msg) -> None:
         row = self._require_char(s)
         if row is None:
-            s.respond(msg, {0: 1})
+            s.respond(msg, {0: "", 2: 1})
             return
         char_id = row["id"]
-        mission_id = msg.body.get(0)
-        mdef = economy.MISSIONS.get(mission_id)
-        if mdef is None:
-            s.respond(msg, {0: 2})   # unknown mission
-            return
-        if not self.server.db.accept_mission(char_id, mission_id):
-            s.respond(msg, {0: 3})   # already active
-            return
-        s.respond(msg, {0: 0})
+        mission_id = self._norm_mission_id(msg.body.get(0, ""))
+        if mission_id and self.server.db.accept_mission(
+                char_id, mission_id, int(time.time())):
+            ret = 0
+        elif mission_id and self.server.db.get_mission(
+                char_id, mission_id) is not None:
+            # already active — the client auto-accepts the next main mission
+            # from last_missionId and then re-sends accept_mission, so this
+            # must be an idempotent success, not an error.
+            ret = 0
+        else:
+            ret = 1   # unknown mission
+        # ret_accept_mission {missionId(0), missionquality(1), ret(2),
+        #                     mission(3) ownmission} — the client only
+        # proceeds through AcceptMissionSuccess when ret succeeds.
+        parm = [0] * 8
+        parm[7] = int(time.time())
+        s.respond(msg, {
+            0: mission_id,
+            2: ret,
+            3: P.encode_ownmission(mission_id, P.MISSION_ACCEPTED, parm),
+        })
+        if ret == 0 and M.is_main_mission(mission_id):
+            self.server.db.set_progress(char_id, "main_mission",
+                                        int(mission_id))
         self._sync_missions(s, char_id)
-        log.info("char %d accepted mission %d", char_id, mission_id)
+        log.info("char %d accepted mission %s (ret=%d)", char_id,
+                 mission_id, ret)
 
     async def h_complete_mission(self, s: Session, msg) -> None:
         row = self._require_char(s)
         if row is None:
-            s.respond(msg, {0: 1})
+            s.respond(msg, {0: "", 1: 1})
             return
         char_id = row["id"]
-        mission_id = msg.body.get(0)
+        mission_id = self._norm_mission_id(msg.body.get(0, ""))
         mrow = self.server.db.get_mission(char_id, mission_id)
-        mdef = economy.MISSIONS.get(mission_id)
-        if mrow is None or mdef is None:
-            s.respond(msg, {0: 2})   # not accepted / unknown
+        if mrow is None:
+            s.respond(msg, {0: mission_id, 1: 1})   # not accepted
             return
-        target = mdef.get("count", 1)
-        if mrow["progress"] < target or mrow["state"] != 1:
-            s.respond(msg, {0: 3})   # objectives not met
-            return
-        s.respond(msg, {0: 0})
-        # pay out and remove the mission (rewards push after the response)
+        # ret_complete_mission {missionId(0), ret(1)}
+        s.respond(msg, {0: mission_id, 1: 0})
+        # pay out and remove the mission
         self.server.db.finish_mission(char_id, mission_id)
-        self._grant_mission_rewards(s, char_id, mdef.get("reward", {}))
+        reward = M.mission_reward(mission_id)
+        if reward:
+            self._grant_mission_rewards(s, char_id, reward)
+        # NOTE: the main-chain cursor stays on the COMPLETED mission — the
+        # client sees last_missionId with no Class-1 mission in the map and
+        # auto-accepts its NextID from its local table (SyncMissionList),
+        # then the accept_mission RPC moves the cursor forward.
         self._sync_missions(s, char_id)
         self._sync_backpack(s, char_id)
-        nxt = mdef.get("next")
-        if nxt and nxt in economy.MISSIONS:
-            self.server.db.accept_mission(char_id, nxt)
-            self._sync_missions(s, char_id)
-        log.info("char %d completed mission %d", char_id, mission_id)
+        log.info("char %d completed mission %s", char_id, mission_id)
 
     async def h_abandon_mission(self, s: Session, msg) -> None:
         row = self._require_char(s)
         if row is None:
-            s.respond(msg, {0: 1})
+            s.respond(msg, {0: "", 1: 1})
             return
         char_id = row["id"]
-        mission_id = msg.body.get(0)
+        mission_id = self._norm_mission_id(msg.body.get(0, ""))
         if self.server.db.get_mission(char_id, mission_id) is None:
-            s.respond(msg, {0: 2})
+            s.respond(msg, {0: mission_id, 1: 1})
             return
         self.server.db.finish_mission(char_id, mission_id)
-        s.respond(msg, {0: 0})
+        # ret_abandon_mission {missionId(0), ret(1)}
+        s.respond(msg, {0: mission_id, 1: 0})
         self._sync_missions(s, char_id)
 
     # ------------------------------------------------------------------

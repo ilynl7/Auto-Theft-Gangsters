@@ -89,59 +89,86 @@ async def test_shop_list_and_buy(server):
 
 
 @pytest.mark.asyncio
-async def test_mission_accept_buy_complete_flow(server):
+async def test_mission_chain_synced_on_pick(server):
+    """After pick the server pushes sync_mission (519) with the real
+    ownmission schema: string missionId + 8-entry parm, and auto-accepts the
+    first tutorial mission on new accounts."""
     srv, gate_port, game_port = server
-    c, char_id = await login_and_pick(game_port, "Quester")
+    c, char_id = await login_and_pick(game_port, "Chainer")
 
-    mission_id = 1001   # type=buy, item 1 x2 -> next 1002
-    mdef = economy.MISSIONS[mission_id]
-    good = next(g for g in economy.SHOPS[1]["goods"]
-                if g["item_id"] == mdef["item_id"])
+    push = await c.next_push(P.SYNC_MISSION)
+    assert push is not None, "sync_mission pushed after pick"
+    entries = decode_object_array(push.body[0])
+    assert entries, "first tutorial mission must be synced"
+    for entry in entries:
+        d = sproto.decode_typed(sproto.as_bytes(entry),
+                                {0: "s", 1: "i", 2: "i", 3: "ia"})
+        mid = sproto.as_str(d[0])
+        assert mid.isdigit(), "missionId must be a numeric STRING"
+        assert d[1] in (1, 2), "state: ACCEPTED=1 or COMPLETE=2"
+        parm = d[3]
+        assert len(parm) >= 8, "client reads parm[7] unconditionally"
+    # the tutorial mission must be the real chain start (1001)
+    mids = [sproto.decode_typed(sproto.as_bytes(e),
+                                {0: "s", 1: "i", 2: "i", 3: "ia"})[0]
+            for e in entries]
+    assert "1001" in [sproto.as_str(m) for m in mids]
+    await c.close()
 
+
+@pytest.mark.asyncio
+async def test_main_mission_accept_complete_flow(server):
+    """accept_mission(112, string id) -> ret_accept_mission(520) with the
+    ownmission blob; complete_mission(113) pays exp + gold and advances the
+    main chain via last_missionId."""
+    srv, gate_port, game_port = server
+    c, char_id = await login_and_pick(game_port, "MainQuest")
+    await c.drain(0.4)
+
+    mission_id = "1001"
     # accept
     resp = await c.rpc(P.ACCEPT_MISSION, {0: mission_id})
-    assert resp.body[0] == 0
+    # ret_accept_mission {missionId(0), missionquality(1), ret(2), mission(3)}
+    assert sproto.as_str(resp.body[0]) == mission_id
+    assert resp.body[2] == 0, "accept must succeed"
     assert srv.db.get_mission(char_id, mission_id) is not None
 
-    # duplicate accept rejected
+    # duplicate accept is idempotent (the client auto-accepts from
+    # last_missionId then re-sends accept_mission): success, no dup row.
     resp = await c.rpc(P.ACCEPT_MISSION, {0: mission_id})
-    assert resp.body[0] == 3
+    assert resp.body[2] == 0   # idempotent success
+    rows = srv.db.list_missions(char_id)
+    assert sum(1 for r in rows if str(r["mission_id"]) == mission_id) == 1
 
-    # completing before the objective is met must fail
-    resp = await c.rpc(P.COMPLETE_MISSION, {0: mission_id})
-    assert resp.body[0] == 3
-
-    # buy enough to satisfy the mission (2x item 1 -> two purchases)
-    for _ in range(mdef["count"] // good["count"] + mdef["count"] % good["count"]):
-        resp = await c.rpc(P.BUY_SHOP_ITEM, {0: good["goods_id"], 1: 1})
-        assert resp.body[0] == 0
-
-    mrow = srv.db.get_mission(char_id, mission_id)
-    assert mrow["progress"] >= mdef["count"]
-    assert mrow["state"] == 1, "mission should auto-complete to claimable"
-
-    # claim the reward
+    # completing pays the level-scaled reward and clears the row
     gold_before = srv.db.get_currency(char_id, economy.CURRENCY_GOLD)
-    diamond_before = srv.db.get_currency(char_id, economy.CURRENCY_DIAMOND)
+    exp_before = srv.db.get_character(char_id)["exp"]
+    level_before = srv.db.get_character(char_id)["level"]
     resp = await c.rpc(P.COMPLETE_MISSION, {0: mission_id})
-    assert resp.body[0] == 0
+    assert sproto.as_str(resp.body[0]) == mission_id
+    assert resp.body[1] == 0, "complete must succeed"
+    assert srv.db.get_mission(char_id, mission_id) is None
 
-    reward = mdef["reward"]
+    reward = economy is not None and __import__(
+        "server.mission_data", fromlist=["mission_reward"]).mission_reward(
+        mission_id)
     assert srv.db.get_currency(char_id, economy.CURRENCY_GOLD) == \
         gold_before + reward["gold"]
-    assert srv.db.get_currency(char_id, economy.CURRENCY_DIAMOND) == \
-        diamond_before + reward["diamond"]
-    for item_id, cnt in reward["items"].items():
-        assert srv.db.get_item_count(char_id, item_id) >= cnt
+    char_row = srv.db.get_character(char_id)
+    assert (char_row["exp"] + 1000 * (char_row["level"] - level_before)
+            - exp_before) == reward["exp"], "exp paid (level-ups rolled over)"
 
-    # mission is gone after completion; chained mission accepted
-    assert srv.db.get_mission(char_id, mission_id) is None
-    assert srv.db.get_mission(char_id, mdef["next"]) is not None
+    # main chain cursor advanced
+    assert srv.db.get_progress(char_id, "main_mission") == 1001
 
-    # abandon the chained mission
-    resp = await c.rpc(P.ABANDON_MISSION, {0: mdef["next"]})
-    assert resp.body[0] == 0
-    assert srv.db.get_mission(char_id, mdef["next"]) is None
+    # abandon the follow-up: accept it first (post-completion the client
+    # would auto-accept 1002 via last_missionId, then send accept_mission)
+    resp = await c.rpc(P.ACCEPT_MISSION, {0: "1002"})
+    assert resp.body[2] == 0
+    resp = await c.rpc(P.ABANDON_MISSION, {0: "1002"})
+    assert sproto.as_str(resp.body[0]) == "1002"
+    assert resp.body[1] == 0
+    assert srv.db.get_mission(char_id, "1002") is None
 
     await c.close()
 
@@ -151,9 +178,9 @@ async def test_visit_mission_completes_on_map_entry(server):
     srv, gate_port, game_port = server
     c, char_id = await login_and_pick(game_port, "Visitor")
 
-    mission_id = 2001   # type=visit map "1"
+    mission_id = "900101"   # legacy visit mission, map "1"
     resp = await c.rpc(P.ACCEPT_MISSION, {0: mission_id})
-    assert resp.body[0] == 0
+    assert resp.body[2] == 0
 
     # a move inside the target map advances the mission (move has no ack;
     # the server answers with a sync_mission push)
@@ -167,7 +194,7 @@ async def test_visit_mission_completes_on_map_entry(server):
     assert mrow["state"] == 1, "visit mission should complete after moving"
 
     resp = await c.rpc(P.COMPLETE_MISSION, {0: mission_id})
-    assert resp.body[0] == 0
+    assert resp.body[1] == 0
     assert srv.db.get_mission(char_id, mission_id) is None
 
     await c.close()

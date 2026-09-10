@@ -149,16 +149,19 @@ GUILD_SHOP = [
 ]
 
 # --- missions ---------------------------------------------------------------
+# The REAL main mission chain lives in server/mission_data.py (extracted
+# from the APK's MissionData table). The entries below are legacy side
+# missions kept for the buy/visit progression hooks.
 MISSIONS = {
-    1001: {
+    "900001": {
         "name": "Stock Up",
         "type": "buy",
         "item_id": 1,
         "count": 2,
         "reward": {"gold": 1000, "diamond": 2, "items": {2: 2}},
-        "next": 1002,
+        "next": "900002",
     },
-    1002: {
+    "900002": {
         "name": "Armed and Ready",
         "type": "buy",
         "item_id": 10,
@@ -166,7 +169,7 @@ MISSIONS = {
         "reward": {"gold": 3000, "diamond": 5, "items": {3: 1}},
         "next": None,
     },
-    2001: {
+    "900101": {
         "name": "Courier Run",
         "type": "visit",
         "map_id": MAIN_CITY_MAP,
@@ -176,7 +179,7 @@ MISSIONS = {
     },
 }
 
-DAILY_MISSION_IDS = [2001]
+DAILY_MISSION_IDS = ["900101"]
 
 # --- combat / npcs ------------------------------------------------------------
 # skills: real per-class skill groups from SkillData merged over the legacy

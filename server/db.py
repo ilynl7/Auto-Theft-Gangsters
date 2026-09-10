@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE TABLE IF NOT EXISTS missions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     char_id     INTEGER NOT NULL REFERENCES characters(id),
-    mission_id  INTEGER NOT NULL,
+    mission_id  TEXT NOT NULL,
     progress    INTEGER NOT NULL DEFAULT 0,
     state       INTEGER NOT NULL DEFAULT 0,   -- 0 active, 1 done (claimable), 2 finished
     accepted_at INTEGER NOT NULL,
@@ -341,12 +341,15 @@ class Database:
             (char_id, mission_id),
         ).fetchone()
 
-    def accept_mission(self, char_id: int, mission_id: int) -> bool:
+    def accept_mission(self, char_id: int, mission_id,
+                       accepted_at: int = None) -> bool:
+        if accepted_at is None:
+            accepted_at = int(time.time())
         try:
             self._conn.execute(
                 "INSERT INTO missions (char_id, mission_id, accepted_at)"
                 " VALUES (?, ?, ?)",
-                (char_id, mission_id, int(time.time())),
+                (char_id, str(mission_id), accepted_at),
             )
             self._conn.commit()
             return True

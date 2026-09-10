@@ -653,10 +653,10 @@ REQUEST_SPECS = {
     # ret_offline_chat: chat_list(0) = object array of chat_item; an empty
     # array means "no offline messages" (what we always reply).
     RET_OFFLINE_CHAT: {0: "oa"},
-    # provisional (no decompiled SprotoType survived for these):
-    ACCEPT_MISSION: {0: "i"},
-    COMPLETE_MISSION: {0: "i"},
-    ABANDON_MISSION: {0: "i"},
+    # real request schemas (decompiled SprotoType/*.cs)
+    ACCEPT_MISSION: {0: "s", 1: "s"},
+    COMPLETE_MISSION: {0: "s", 1: "i"},
+    ABANDON_MISSION: {0: "s"},
     USE_ITEM: {0: "i", 1: "i", 2: "i"},
     SELL_ITEM: {0: "i", 1: "i"},
     ASK_SHOP_LIST: {0: "i"},
@@ -761,14 +761,27 @@ RESPONSE_SPECS = {
     # and is decoded by the push path in tests.
     ENTER_MAP: {0: "o"},
     HEART_BEAT: {0: "i", 1: "i"},
-    # provisional (see server/economy.py for the field layout notes)
-    ACCEPT_MISSION: {0: "i"},
-    COMPLETE_MISSION: {0: "i"},
-    ABANDON_MISSION: {0: "i"},
-    RET_ACCEPT_MISSION: {0: "i", 1: "i"},
-    RET_COMPLETE_MISSION: {0: "i", 1: "i"},
-    RET_ABANDON_MISSION: {0: "i", 1: "i"},
-    SYNC_MISSION: {0: "oa"},
+    # REAL schemas (decompiled SprotoType/*.cs):
+    # accept_mission.request {missionId(0) STRING, onlineId(1) STRING}
+    ACCEPT_MISSION: {0: "s", 1: "s"},
+    # complete_mission.request {missionId(0) STRING, parm(1) int}
+    COMPLETE_MISSION: {0: "s", 1: "i"},
+    # abandon_mission.request {missionId(0) STRING}
+    ABANDON_MISSION: {0: "s"},
+    # ret_accept_mission {missionId(0) STRING, missionquality(1), ret(2),
+    #                     mission(3) ownmission}
+    RET_ACCEPT_MISSION: {0: "s", 1: "i", 2: "i", 3: "o"},
+    # ret_complete_mission {missionId(0) STRING, ret(1)}
+    RET_COMPLETE_MISSION: {0: "s", 1: "i"},
+    # ret_abandon_mission {missionId(0) STRING, ret(1)}
+    RET_ABANDON_MISSION: {0: "s", 1: "i"},
+    # sync_mission {missions(0) map<string,ownmission> = OBJECT ARRAY keyed
+    # on v.missionId, last_missionId(1) STRING, sidedone_mission(2) int[]}
+    SYNC_MISSION: {0: "oa", 1: "s", 2: "ia"},
+    # set_mission_state {missionId(0) STRING, missionstate(1) int}
+    SET_MISSION_STATE: {0: "s", 1: "i"},
+    # set_mission_param {missionId(0) STRING, paramindex(1) int, param(2) int}
+    SET_MISSION_PARAM: {0: "s", 1: "i", 2: "i"},
     RET_USE_ITEM: {0: "i", 1: "i"},
     UPDATE_ITEM: {0: "i", 1: "i", 2: "i"},
     SYNC_BACKPACK_ITEM: {0: "oa"},
@@ -1023,12 +1036,60 @@ def encode_game_server(server_id, name, ip, port, state=0,
 
 # --- mission / shop / item wire objects (provisional schemas) --------------
 
-def encode_mission_state(mission_id: int, progress: int, state: int) -> bytes:
-    """sync_mission element: {mission_id(0), progress(1), state(2)}.
+# --- missions (real wire schemas) --------------------------------------------
 
-    state: 0 = active, 1 = complete (reward claimable), 2 = finished/claimed.
+# MISSION_STATE: FAIL=0 ACCEPTED=1 COMPLETE=2 (decompiled MISSION_STATE.cs)
+MISSION_ACCEPTED = 1
+MISSION_COMPLETE = 2
+
+
+def encode_ownmission(mission_id: str, state: int,
+                      parm: list = None) -> bytes:
+    """SprotoType.ownmission: {missionId(0) STRING, missionstate(1) int,
+    missionquality(2) int, parm(3) int[]}.
+
+    The client's SyncMissionList reads parm[7] unconditionally on every
+    mission (mission change time), so parm MUST carry >= 8 entries.
     """
-    return _enc.encode_object({0: mission_id, 1: progress, 2: state})
+    p = list(parm or [])
+    while len(p) < 8:
+        p.append(0)
+    return _enc.encode_object({
+        0: str(mission_id),
+        1: int(state),
+        3: _enc.encode_integer_array(p),
+    })
+
+
+def encode_sync_mission(missions: list, last_mission_id: str = None,
+                        sidedone: list = None) -> dict:
+    """sync_mission push body FIELDS.
+
+    missions(0): object array of ownmission blobs — the client reads it as
+    map<string, ownmission> keyed on v.missionId. last_missionId(1): when
+    the currently-active main mission is not in the map, the client
+    auto-accepts its NextID from its local table — this is how the chain
+    advances even for client-local logic (level-up, copies, delivery).
+    """
+    body = {
+        0: _enc.encode_object_array(missions),
+    }
+    if last_mission_id is not None:
+        body[1] = str(last_mission_id)
+    if sidedone is not None:
+        body[2] = _enc.encode_integer_array(sidedone)
+    return body
+
+
+def encode_set_mission_state(mission_id: str, state: int) -> dict:
+    """set_mission_state(523) push body {missionId(0), missionstate(1)}."""
+    return {0: str(mission_id), 1: int(state)}
+
+
+def encode_set_mission_param(mission_id: str, index: int, param: int) -> dict:
+    """set_mission_param(524) push body {missionId(0), paramindex(1),
+    param(2)}."""
+    return {0: str(mission_id), 1: int(index), 2: int(param)}
 
 
 def encode_item_stack(item_id: int, count: int) -> bytes:
@@ -1062,25 +1123,27 @@ def encode_damage_board(entries: list) -> bytes:
 
 
 def encode_drop_item_info(server_id: int, item_id: int, count: int,
-                          pos_x: int, pos_z: int) -> bytes:
-    """SprotoType.drop_item_info: {serverId(0) int, pos_x(1) int,
-    pos_z(2) int, type(3) int, item(4): SprotoType.item object,
-    ownServerId(7) int}. SprotoType.item: {itemId(0) STRING, itemCount(1),
-    quality(3), id(4) STRING, count2(5)} — itemId must be the REAL ItemData
-    row id as a string, or GetItemDataByID returns null and the client
-    crashes (drop_item_info_handler dereferences itemDataByID.Type).
+                          pos_x: int, pos_z: int) -> dict:
+    """drop_item_info(527) PUSH body fields — the push body IS the
+    drop_item_info.request object itself (the client's NetReceiver decodes
+    it directly): {serverId(0) int, pos_x(1) int, pos_z(2) int, type(3) int,
+    item(4): SprotoType.item object, ownServerId(7) int}. SprotoType.item:
+    {itemId(0) STRING, itemCount(1), quality(3), id(4) STRING, count2(5)} —
+    itemId must be the REAL ItemData row id as a string, or GetItemDataByID
+    returns null and the client crashes (drop_item_info_handler
+    dereferences itemDataByID.Type).
     """
     item = _enc.encode_object({
         0: str(item_id), 1: count,
     })
-    return _enc.encode_object({
+    return {
         0: server_id,
         1: int(pos_x * 100),
         2: int(pos_z * 100),
         3: 0,                 # type
         4: item,
         7: server_id,         # ownServerId
-    })
+    }
 
 
 def encode_shop_good(goods_id: int, item_id: int, count: int,
