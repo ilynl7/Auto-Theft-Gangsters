@@ -237,15 +237,135 @@ PLAYER_BASE_ATTACK = 12
 PLAYER_BASE_HP = 100
 RESPAWN_HP_FRACTION = 1.0
 
-# Star-1 starter gear set: [(equip_slot, item_id)] granted on character
-# creation. Slot 0 weapon comes from the profession's tier-1 weapon.
+# Starter extras granted on character creation. The real tier-1 armor set
+# (helmet/chest/legs/belt/necklace) comes from economy.starter_armor(); the
+# weapon comes from the profession's tier-1 weapon. Badges get their own
+# system pass later, so only the legacy starter badge is granted here.
 STARTER_GEAR = [
-    (1, 3),    # Body Armor (slot 1)
     (2, 20),   # Badge of Strength (slot 2)
 ]
 
 # EQUIP_QUALITY.KUANG_WHITE - the 1-star quality for starter gear.
 STARTER_QUALITY = 1
+
+# --- real equipment instances (colors from the recovered tables) -------------
+#
+# The client colors an item by its gameitem.quality (EQUIP_QUALITY:
+# 1=WHITE 2=GREEN 3=BLUE 4=PURPLE) — and per the client's EquipDrop flow the
+# quality comes from the item's RANDOM STAT: one stat is rolled from the
+# ATTR_POOLS table (recovered EquipDrop rows) and the stat's quality IS the
+# item's color. Weapons additionally roll ONE random skill from their skill
+# group; the weapon's color is the rolled skill's color.
+
+# ARMOR_ITEMS: equip_id -> {"class", "tier", "pos", "name", "base_attrs"}
+# built from the recovered ARMOR_ROWS (client EquipData Position 2..6:
+# helmet/chest/legs/belt/necklace).
+ARMOR_ITEMS = {}
+for _key, (_eid, _aname, _attrs, _q) in GD.ARMOR_ROWS.items():
+    _cls, _tier, _pos = (int(x) for x in _key.split("-"))
+    ARMOR_ITEMS[_eid] = {
+        "class": _cls, "tier": _tier, "pos": _pos, "name": _aname,
+        "base_attrs": list(_attrs),
+    }
+    # register as a real equipment item so equip/sell/loot flows work
+    ITEMS.setdefault(_eid, {
+        "name": _aname, "type": "equipment", "price": 0,
+        "base_attrs": list(_attrs),
+    })
+
+# client EquipData Position -> db equip slot. Weapon keeps db slot 0 and the
+# legacy badge slot 2; armor pieces get 3..7 (helmet 3, chest 4, legs 5,
+# belt 6, necklace 7) so every equipped index stays unique on the wire.
+ARMOR_DB_SLOT_OFFSET = 1
+
+
+def starter_armor(profession: int):
+    """[(db_slot, armor_id)] — the real tier-1 armor set for a profession."""
+    out = []
+    for pos in (2, 3, 4, 5, 6):
+        row = GD.ARMOR_ROWS.get("%d-1-%d" % (profession, pos))
+        if row is not None:
+            out.append((pos + ARMOR_DB_SLOT_OFFSET, row[0]))
+    return out
+
+
+# EQUIP_QUALITY on the wire for each ATTR_POOLS quality level (0..3).
+QUALITY_WIRE = {0: 1, 1: 2, 2: 3, 3: 4}
+# roll weights: white 45% / green 30% / blue 18% / purple 7%
+QUALITY_WEIGHTS = ((0, 45), (1, 30), (2, 18), (3, 7))
+
+
+def _roll_quality(rng):
+    total = sum(w for _, w in QUALITY_WEIGHTS)
+    roll = rng.randrange(total)
+    acc = 0
+    for q, w in QUALITY_WEIGHTS:
+        acc += w
+        if roll < acc:
+            return q
+    return 0
+
+
+def _pick_attr(pool, rng):
+    """Weighted pick from an ATTR_POOLS entry list (attr_id, q, value, w)."""
+    total = sum(e[3] for e in pool)
+    roll = rng.randrange(total)
+    acc = 0
+    for entry in pool:
+        acc += entry[3]
+        if roll < acc:
+            return entry
+    return pool[0]
+
+
+def _pool_for(cls: int, tier: int, q: int):
+    pool = GD.ATTR_POOLS.get("%d-%d-%d" % (cls, tier, q))
+    if pool is None:
+        pool = GD.ATTR_POOLS.get("%d-%d-0" % (cls, tier), [])
+    return pool
+
+
+def roll_weapon_instance(weapon_id: int, rng=None):
+    """(quality_wire, attrs) for a weapon.
+
+    Rolls ONE random skill from the weapon's skill group at a random color;
+    the weapon's color IS the rolled skill's color. The attr entry carries
+    (index, attr_id, value, quality, skillId) — skillId is what the client
+    shows as the weapon's colored skill.
+    """
+    import random as _random
+    rng = rng or _random
+    w = ITEMS.get(weapon_id, {})
+    cls = w.get("weapon_class", 0)
+    tier = w.get("tier", 1)
+    skills = w.get("skills") or [101]
+    skill = rng.choice(skills)
+    q = _roll_quality(rng)
+    aid, _pq, val, _pw = _pick_attr(_pool_for(cls, tier, q), rng)
+    wire_q = QUALITY_WIRE[q]
+    return wire_q, [(0, aid, val, wire_q, str(skill))]
+
+
+def roll_armor_instance(armor_id: int, rng=None):
+    """(quality_wire, attrs) for a real armor piece.
+
+    Base attrs from the recovered EquipData row plus ONE random stat rolled
+    from ATTR_POOLS at a random quality — the stat's quality gives the piece
+    its color. Attr entries are (index, attr_id, value, quality, skillId).
+    """
+    import random as _random
+    rng = rng or _random
+    info = ARMOR_ITEMS.get(armor_id)
+    if info is None:
+        return 1, []
+    q = _roll_quality(rng)
+    aid, _pq, val, _pw = _pick_attr(
+        _pool_for(info["class"], info["tier"], q), rng)
+    attrs = [(i, a, v, 0, "") for i, (a, v) in enumerate(info["base_attrs"])]
+    wire_q = QUALITY_WIRE[q]
+    attrs.append((len(attrs), aid, val, wire_q, ""))
+    return wire_q, attrs
+
 
 # Random attribute roll ranges for freshly created gear (gameitem
 # random_attri entries): (attr_id, min, max). Attr ids follow the client's

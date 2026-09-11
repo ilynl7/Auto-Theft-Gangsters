@@ -1362,8 +1362,15 @@ def encode_gameitem(index_id: int, item_id: int, stack: int = 1,
 
     quality is EQUIP_QUALITY: -1=INVALID 0=BLACK 1=WHITE(1-star) 2=GREEN
     3=BLUE 4=PURPLE 5=YELLOW 6=RED. random_attris is an [(index, id, value)]
-    list; random_attri: index(0) i, id(1) i, value(2) i, quality(3) i,
-    skillId(4) s, qualityId(5) s.
+    or [(index, id, value, quality, skillId)] list; random_attri:
+    index(0) i, id(1) i, value(2) i, quality(3) i, skillId(4) s,
+    qualityId(5) s.
+
+    The item's COLOR comes from gameitem.quality, and per the client's
+    EquipDrop flow that quality equals the rolled random stat's quality (or
+    the rolled skill's quality for weapons) — so an entry carrying a nonzero
+    quality field forces gameitem.quality to match, and skillId rides at
+    field 4 so the client shows the weapon's colored skill.
     """
     fields = {
         0: index_id,
@@ -1375,8 +1382,20 @@ def encode_gameitem(index_id: int, item_id: int, stack: int = 1,
         6: quality,
     }
     if random_attris:
-        attr_blobs = [_enc.encode_object({0: idx, 1: aid, 2: val})
-                      for idx, aid, val in random_attris]
+        stat_quality = None
+        attr_blobs = []
+        for entry in random_attris:
+            idx, aid, val = entry[0], entry[1], entry[2]
+            q = entry[3] if len(entry) > 3 else 0
+            skill = entry[4] if len(entry) > 4 else ""
+            if q:
+                stat_quality = q
+            af = {0: idx, 1: aid, 2: val, 3: q}
+            if skill:
+                af[4] = str(skill)
+            attr_blobs.append(_enc.encode_object(af))
+        if stat_quality:
+            quality = stat_quality
         fields[9] = _enc.encode_object_array(attr_blobs)
     return _enc.encode_object(fields)
 

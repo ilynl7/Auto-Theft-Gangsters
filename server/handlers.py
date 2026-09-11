@@ -346,16 +346,21 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         if row is None:
             s.respond(msg, {1: 1})  # errno: name taken
             return
-        # grant the profession's starting weapon (tier 1 of its class), a
-        # full star-1 gear set with random stats, and the class's real skill
-        # group (economy.PROFESSIONS[prof].skills)
+        # grant the profession's starting weapon (tier 1 of its class), the
+        # real tier-1 armor set (helmet/chest/legs/belt/necklace from the
+        # recovered EquipData rows), the starter badge, and the class's real
+        # skill group (economy.PROFESSIONS[prof].skills)
         prof_def = economy.PROFESSIONS[profession]
         start_weapon = (profession + 1) * 10000 + 1
         if start_weapon in economy.ITEMS:
             self.server.db.add_item(row["id"], start_weapon, 1)
             self.server.db.set_equipped(row["id"], 0, start_weapon)
-        # Star-1 (EQUIP_QUALITY.KUANG_WHITE = 1) gear set with rolled random
-        # attributes — the "random stats" the real game gives new characters.
+        # Real tier-1 armor per profession: helmet(2)/chest(3)/legs(4)/
+        # belt(5)/necklace(6) -> db slots 3..7.
+        for slot, item_id in economy.starter_armor(profession):
+            self.server.db.add_item(row["id"], item_id, 1)
+            self.server.db.set_equipped(row["id"], slot, item_id)
+        # legacy starter badge (badges get their own system pass later)
         for slot, item_id in economy.STARTER_GEAR:
             if item_id in economy.ITEMS:
                 self.server.db.add_item(row["id"], item_id, 1)
@@ -467,13 +472,24 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # main_player_create must arrive together with enter_map: the client
         # cannot send map_ready until the main player exists.
         # Equipped gear rides along as the character.equip gameitem map so
-        # the spawn handler SyncPacks it into the client's EQUIPPACK.
+        # the spawn handler SyncPacks it into the client's EQUIPPACK. Each
+        # piece gets a REAL rolled instance: weapons roll one random skill
+        # from their group (the skill's quality IS the weapon color) and
+        # armor rolls one random stat from the recovered ATTR_POOLS (the
+        # stat's quality IS the piece color) on top of its base attrs.
+        # (indexId, itemId, quality, level, random_attrs) - indexId must be
+        # non-zero (0 is the client's "unknown" sentinel).
         equips = []
         for slot, item_id in self.server.db.list_equipped(wp.char_id):
-            # (indexId, itemId, quality, level, random_attrs) - indexId must
-            # be non-zero (0 is the client's "unknown" sentinel).
-            equips.append((slot + 1, item_id, economy.STARTER_QUALITY, 0,
-                           economy.roll_random_attrs(2)))
+            if slot == 0 or item_id in economy.ARMOR_ITEMS:
+                quality, attrs = (
+                    economy.roll_weapon_instance(item_id) if slot == 0
+                    else economy.roll_armor_instance(item_id))
+            else:
+                quality = economy.STARTER_QUALITY
+                attrs = [(i, e[0], e[1], 0, "") for i, e in
+                         enumerate(economy.roll_random_attrs(2))]
+            equips.append((slot + 1, item_id, quality, 0, attrs))
         s.push(P.MAIN_PLAYER_CREATE, W.encode_main_player_create(
             wp, skills=[(r["skill_id"], r["level"])
                         for r in self.server.db.list_skills(wp.char_id)],
@@ -1170,11 +1186,14 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             exp, gold, drops = base["exp"], base["gold"], {}
         for item_id, cnt in drops.items():
             db.add_item(wp.char_id, item_id, cnt)
+            # encode_drop_item_info returns the PUSH BODY fields (the push
+            # body IS the drop_item_info.request object) — passing it as a
+            # nested value under tag 0 breaks sproto encoding.
             self.server.world.broadcast(
                 wp.map_id, P.DROP_ITEM_INFO,
-                {0: P.encode_drop_item_info(
+                P.encode_drop_item_info(
                     npc.npc_id if npc else 0, item_id, cnt,
-                    msg.body.get(1, 0) / 100.0, msg.body.get(2, 0) / 100.0)})
+                    msg.body.get(1, 0) / 100.0, msg.body.get(2, 0) / 100.0))
         if gold:
             db.add_currency(wp.char_id, economy.CURRENCY_GOLD, gold)
         level, exp_left = db.add_exp(wp.char_id, exp)
