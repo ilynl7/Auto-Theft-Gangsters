@@ -263,9 +263,19 @@ async def test_misc_progress_tags(server):
     assert resp.body[0] == 0
     assert srv.db.get_progress(char_id, "tutorial_done") == 1
 
-    resp = await c.rpc(P.UNLOCK_FUNCTION_COMPLETE, {0: 7})
+    # unlock_function_complete.request {ID(0) STRING, state(1) i} — the
+    # client sends the function id as TEXT (PlayerCommonData: request.ID =
+    # functionId). The old int spec decoded the 3-byte string "100" as a
+    # bogus integer-size dword and the server threw
+    # SprotoError('read invalid integer size (3)'), killing the connection
+    # right after account creation (reconnect UI + "user checking failed").
+    resp = await c.rpc(P.UNLOCK_FUNCTION_COMPLETE, {0: "100", 1: 1})
     assert resp.body[0] == 0
-    assert srv.db.get_progress(char_id, "unlock_func_7") == 1
+    assert srv.db.get_progress(char_id, "unlock_func_100") == 1
+
+    resp = await c.rpc(P.UNLOCK_FUNCTION_COMPLETE, {0: "3015", 1: 2})
+    assert resp.body[0] == 0
+    assert srv.db.get_progress(char_id, "unlock_func_3015") == 2
 
     resp = await c.rpc(P.RE_NAME, {0: "NewAlias"})
     assert resp.body[0] == 0

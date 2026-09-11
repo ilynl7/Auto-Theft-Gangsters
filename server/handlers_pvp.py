@@ -615,8 +615,12 @@ class PvpHandlersMixin:
         if row is None:
             s.respond(msg, {0: 1})
             return
-        func_id = msg.body.get(0, 0)
-        self.server.db.set_progress(row["id"], "unlock_func_%d" % func_id, 1)
+        # request {ID(0) string, state(1) int} — the id is the FUNCTION_TYPE
+        # value as text (see encode_function_info)
+        func_id = sproto.as_str(msg.body.get(0, ""))
+        state = msg.body.get(1, 1)
+        self.server.db.set_progress(row["id"],
+                                    "unlock_func_%s" % func_id, state)
         s.respond(msg, {0: 0})
 
     async def h_re_name(self, s: Session, msg) -> None:

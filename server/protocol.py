@@ -754,7 +754,13 @@ REQUEST_SPECS = {
     REQUEST_SLOT_REWARD: {0: "i"},
     # misc
     TUTORIAL_FINISH: {},
-    UNLOCK_FUNCTION_COMPLETE: {0: "i"},
+    # unlock_function_complete.request (decompiled): ID(0) STRING — the
+    # function id as text (e.g. "100" MAIN_MISSION), state(1) i. An int
+    # spec made the server read the 3-byte string length as an integer
+    # size dword -> SprotoError('read invalid integer size (3)') killed
+    # the connection right after account creation (reconnect UI +
+    # "user checking failed" loop).
+    UNLOCK_FUNCTION_COMPLETE: {0: "s", 1: "i"},
     RE_NAME: {0: "s"},
     CHANGE_SHOW_TYPE: {0: "i"},
     IMPACT_NPC: {0: "i"},

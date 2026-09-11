@@ -328,6 +328,36 @@ async def test_full_login_flow(server):
 
 
 @pytest.mark.asyncio
+async def test_combat_power_is_weapon_scaled_not_level_x100(server):
+    """character_overview.attribute_overview.combValue (field 1) drives the
+    power number on the role-select screen. The old default 100*level
+    showed a bogus "power 8000" for the test level-80 characters; the real
+    formula adds the equipped weapon/badge power on top of the base attack.
+    """
+    from server.world import comb_value_for
+    srv, gate_port, game_port = server
+    c = await _connect(game_port)
+    resp = await c.rpc(P.VISITOR, {})
+    account_id = sproto.as_str(resp.body[0])
+    key = sproto.as_str(resp.body[1])
+    await c.rpc(P.VERFIY, {0: account_id, 1: key, 2: "14119"})
+    await c.rpc(P.LOGIN, {0: 1, 1: account_id, 2: 0, 3: "1.012.017",
+                          4: "Unity4.7", 5: 1, 6: 12345})
+    general = sproto.encode_object({0: "PowerRanger", 2: 0})
+    resp = await c.rpc(P.CHARACTER_CREATE, {0: general})
+    overview = sproto.decode_typed(sproto.as_bytes(resp.body[0]),
+                                   CHAR_OVERVIEW_SPEC)
+    char_id = overview[0]
+    attr = sproto.decode_typed(sproto.as_bytes(overview[2]), {0: "i", 1: "i"})
+    level = attr[0]
+    comb = attr[1]
+    assert comb == comb_value_for(srv.db, char_id, level), (
+        "combValue must come from comb_value_for (weapon-inclusive)")
+    assert comb != 100 * level, "combValue must not be the 100*level stub"
+    await c.close()
+
+
+@pytest.mark.asyncio
 async def test_real_client_dispatch_session_only_responses(server):
     """Regression: the real client's NetLogic.ProcessPack routes frames by
     Package header — HasType -> push, HasSession -> RPC response. Responses

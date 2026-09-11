@@ -304,7 +304,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # character_overview objects (same wire layout as an object array).
         # The client dereferences .general.profession, .attribute_other.level
         # and .visual on each — a flat {id,name,level,sex} blob crashes it.
-        chars = [W.encode_character_overview(r) for r in rows]
+        chars = [W.encode_character_overview(
+            r,
+            comb_value=W.comb_value_for(self.server.db, r["id"],
+                                         r["level"]))
+            for r in rows]
         s.respond(msg, {0: sproto.encode_object_array(chars)})
 
     async def h_character_create(self, s: Session, msg) -> None:
@@ -361,7 +365,12 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # character_create.response {character(0), errno(1)} — the client
         # reads .general.profession, .createtime and .attribute_other.level
         # off a character_overview, then immediately sends character_pick.
-        overview = W.encode_character_overview(row)
+        # combValue comes from the real formula (base attack + weapon +
+        # badge power, scaled) — NOT 100*level, which showed a bogus
+        # "power 8000" on the role-select screen at the test level 80.
+        overview = W.encode_character_overview(
+            row, comb_value=W.comb_value_for(self.server.db, row["id"],
+                                             row["level"]))
         s.respond(msg, {0: overview, 1: 0})
 
     async def h_character_pick(self, s: Session, msg) -> None:
