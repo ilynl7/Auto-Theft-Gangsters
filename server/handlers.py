@@ -548,6 +548,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         moving = bool(msg.body.get(1, False))
         wp.moving = moving
         wp.walk = moving
+        # persist the live position so a re-login resumes exactly where the
+        # player was (and tutorial checkpoints are not replayed from spawn)
+        self.server.db.save_position(
+            wp.char_id, wp.map_id,
+            wp.pos["x"], wp.pos["y"], wp.pos["z"], wp.pos["o"])
         self.server.world.broadcast(
             wp.map_id, P.AOI_UPDATE_MOVE,
             {0: W.encode_aoi_update_move(wp)},
@@ -1048,11 +1053,14 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # 0 weapon, 1 head, 2 body, 3 legs, 4 belt, 5 necklace.
         # The client's Position-2..6 armor rows map to db slots 1..5, so the
         # wire slot already matches the db slot for 1..5.
+        # NOTE: _unequip_slot is a plain (sync) method — it must NOT be
+        # awaited or the dispatch raises "object NoneType can't be used in
+        # 'await' expression" and tag 117 never gets a response.
         slot = msg.body.get(0)
         if slot is None or slot == 0:
-            await self._unequip_slot(s, msg, 0)   # legacy/body fallback
+            self._unequip_slot(s, msg, 0)   # legacy/body fallback
         elif isinstance(slot, int) and 1 <= slot <= 5:
-            await self._unequip_slot(s, msg, slot)
+            self._unequip_slot(s, msg, slot)
         else:
             s.respond(msg, {0: 2})
 
@@ -1077,7 +1085,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         self._recalc_and_sync(s, char_id)
 
     async def h_unequip_badge(self, s: Session, msg) -> None:
-        await self._unequip_slot(s, msg, economy.BADGE_DB_SLOT)
+        self._unequip_slot(s, msg, economy.BADGE_DB_SLOT)
 
     async def h_equip_fashion(self, s: Session, msg) -> None:
         db = self.server.db
@@ -1099,7 +1107,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         self._sync_fashion(s, char_id)
 
     async def h_unequip_fashion(self, s: Session, msg) -> None:
-        await self._unequip_slot(s, msg, economy.FASHION_DB_SLOT)
+        self._unequip_slot(s, msg, economy.FASHION_DB_SLOT)
 
     async def h_open_item_package(self, s: Session, msg) -> None:
         db = self.server.db

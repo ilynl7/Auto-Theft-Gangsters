@@ -376,12 +376,14 @@ def _roll_skill_quality(rng):
 def roll_weapon_instance(weapon_id: int, rng=None):
     """(quality_wire, attrs) for a weapon.
 
-    Rolls ONE random skill from the weapon's real BaseSkills group
-    (game_data.WEAPONS[id].skills: 101-104/201-204/301-304) at a rarity
-    drawn from the recovered SkillQualityData weights; the weapon's color IS
-    the rolled skill's rarity. The attr entry carries
-    (index, attr_id, value, quality, skillId) — skillId is what the client
-    shows as the weapon's colored skill, quality is EQUIP_QUALITY 0..3.
+    The weapon's attack is its base BSValue atk (base_attrs), NOT a skill —
+    skills are the character's 6 per-class actives. The rolled instance
+    carries ONE random skill from the weapon's class group (including the
+    class actives 105/106, 205/206, 305/306) at a rarity drawn from the
+    recovered SkillQualityData weights; the weapon's color IS the rolled
+    skill's rarity. The attr entry carries (index, attr_id, value, quality,
+    skillId) — skillId is what the client shows as the weapon's colored
+    skill, quality is EQUIP_QUALITY 0..3.
     """
     import random as _random
     rng = rng or _random
@@ -390,15 +392,21 @@ def roll_weapon_instance(weapon_id: int, rng=None):
     skill = rng.choice(skills)
     q = _roll_skill_quality(rng)
     wire_q = QUALITY_WIRE[q]
-    return wire_q, [(0, 0, 0, wire_q, str(skill))]
+    # base atk rides the normal attribute slot (attr 1001); the random slot
+    # is reserved for the rolled skill
+    atk = w.get("atk", 0) or w.get("power", 0)
+    return wire_q, [(0, 1001, atk, 0, ""), (1, 0, 0, wire_q, str(skill))]
 
 
 def roll_armor_instance(armor_id: int, rng=None):
     """(quality_wire, attrs) for a real armor piece.
 
-    Base attrs from the recovered EquipData row plus ONE random stat rolled
-    from ATTR_POOLS at a random quality — the stat's quality gives the piece
-    its color. Attr entries are (index, attr_id, value, quality, skillId).
+    Base attrs from the recovered EquipData row PLUS 1-2 random bonus stats
+    (count scales with tier: tier 1-2 -> 1 stat, tier 3+ -> 2 stats) rolled
+    from the dedicated random pool — the base status row never appears in
+    the random slots. The highest-quality random stat's quality gives the
+    piece its color. Attr entries are (index, attr_id, value, quality,
+    skillId) where index is the random slot 0..7.
     """
     import random as _random
     rng = rng or _random
@@ -406,17 +414,25 @@ def roll_armor_instance(armor_id: int, rng=None):
     if info is None:
         return 1, []
     q = _roll_quality(rng)
-    aid, _pq, val, _pw = _pick_attr(
-        _pool_for(info["class"], info["tier"], q), rng)
-    attrs = [(i, a, v, 0, "") for i, (a, v) in enumerate(info["base_attrs"])]
-    wire_q = QUALITY_WIRE[q]
-    attrs.append((len(attrs), aid, val, wire_q, ""))
-    return wire_q, attrs
+    n_random = 2 if info.get("tier", 1) >= 3 else 1
+    # random bonus stats occupy the dedicated slots AFTER the base row
+    base = [(i, a, v, 0, "") for i, (a, v) in enumerate(info["base_attrs"])]
+    rolls = roll_random_attrs(n_random, rng)
+    best_q = 0
+    attrs = list(base)
+    for _slot, aid, val in rolls:
+        rq = _roll_quality(rng)
+        best_q = max(best_q, rq)
+        attrs.append((len(attrs), aid, val, QUALITY_WIRE[rq], ""))
+    # color by the best random stat's rarity (client EquipDrop rule)
+    return QUALITY_WIRE[best_q] if best_q else QUALITY_WIRE[q], attrs
 
 
 # Random attribute roll ranges for freshly created gear (gameitem
 # random_attri entries): (attr_id, min, max). Attr ids follow the client's
 # ATTRIBUTE_TYPE ids; the character screen just lists whatever arrives.
+# The pool holds ONLY random bonus stats — the equipment's base status row
+# comes separately from base_attrs and must never appear as a random roll.
 RANDOM_ATTR_POOL = [
     (1, 5, 20),     # atk
     (2, 5, 20),     # def
@@ -424,19 +440,24 @@ RANDOM_ATTR_POOL = [
     (4, 1, 5),      # hit
     (5, 1, 5),      # eva
     (6, 1, 3),      # cri
+    (7, 1, 3),      # res
+    (8, 1, 2),      # exd
 ]
+# the gameitem random_attri array supports up to 8 bonus slots
+RANDOM_ATTR_SLOTS = 8
 
 
 def roll_random_attrs(count: int = 2, rng=None):
-    """Roll `count` random attributes from RANDOM_ATTR_POOL.
+    """Roll `count` DISTINCT random attributes from RANDOM_ATTR_POOL.
 
-    Returns [(index, attr_id, value)] for gameitem.random_attri.
+    Returns [(index, attr_id, value)] for gameitem.random_attri — index is
+    the random_attri SLOT (0..7), not the roll order.
     """
     import random as _random
     rng = rng or _random
     pool = rng.sample(RANDOM_ATTR_POOL, min(count, len(RANDOM_ATTR_POOL)))
-    return [(i, aid, rng.randint(lo, hi))
-            for i, (aid, lo, hi) in enumerate(pool)]
+    return [(slot, aid, rng.randint(lo, hi))
+            for slot, (aid, lo, hi) in enumerate(pool)]
 # skills: real per-class skill groups from SkillData merged over the legacy
 # generic set
 SKILLS = {
