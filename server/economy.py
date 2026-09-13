@@ -250,12 +250,13 @@ STARTER_QUALITY = 1
 
 # --- real equipment instances (colors from the recovered tables) -------------
 #
-# The client colors an item by its gameitem.quality (EQUIP_QUALITY:
-# 1=WHITE 2=GREEN 3=BLUE 4=PURPLE) — and per the client's EquipDrop flow the
-# quality comes from the item's RANDOM STAT: one stat is rolled from the
-# ATTR_POOLS table (recovered EquipDrop rows) and the stat's quality IS the
-# item's color. Weapons additionally roll ONE random skill from their skill
-# group; the weapon's color is the rolled skill's color.
+# The client colors an item by its gameitem.quality (EQUIP_QUALITY —
+# decompiled EQUIP_QUALITY.cs: BLACK=-2 INVALID=-1 WHITE=0 GREEN=1 BLUE=2
+# PURPLE=3 YELLOW=4 RED=5) — and per the client's EquipDrop flow the quality
+# comes from the item's RANDOM STAT: one stat is rolled from the ATTR_POOLS
+# table (recovered EquipDrop rows) and the stat's quality IS the item's
+# color. Weapons additionally roll ONE random skill from their skill group;
+# the weapon's color is the rolled skill's color.
 
 # ARMOR_ITEMS: equip_id -> {"class", "tier", "pos", "name", "base_attrs"}
 # built from the recovered ARMOR_ROWS (client EquipData Position 2..6:
@@ -267,16 +268,40 @@ for _key, (_eid, _aname, _attrs, _q) in GD.ARMOR_ROWS.items():
         "class": _cls, "tier": _tier, "pos": _pos, "name": _aname,
         "base_attrs": list(_attrs),
     }
-    # register as a real equipment item so equip/sell/loot flows work
+    # register as a real equipment item so equip/sell/loot flows work; the
+    # equip slot comes from the recovered EquipData Position (see slot_for).
     ITEMS.setdefault(_eid, {
         "name": _aname, "type": "equipment", "price": 0,
-        "base_attrs": list(_attrs),
+        "base_attrs": list(_attrs), "pos": _pos,
     })
 
-# client EquipData Position -> db equip slot. Weapon keeps db slot 0 and the
-# legacy badge slot 2; armor pieces get 3..7 (helmet 3, chest 4, legs 5,
-# belt 6, necklace 7) so every equipped index stays unique on the wire.
-ARMOR_DB_SLOT_OFFSET = 1
+
+# db equip slot = client EQUIP_BACKPACK_TYPE (WEAPON=0, HEAD=1, BODY=2,
+# LEG=3, BELT=4, NECKLACE=5). The recovered armor rows store the client's
+# EquipData Position 2..6 (helmet..necklace); map them straight through:
+# position p -> slot p-1. Badges/fashion keep the legacy slots 8/9 on the
+# server so they never collide with the six real equip slots.
+ARMOR_DB_SLOT_OFFSET = -1
+BADGE_DB_SLOT = 8
+FASHION_DB_SLOT = 9
+
+
+def slot_for(item_id: int):
+    """db equip slot for an item id, or None if it is not equipment."""
+    idef = ITEMS.get(item_id)
+    if idef is None:
+        return None
+    if idef.get("type") == "badge":
+        return BADGE_DB_SLOT
+    if idef.get("type") == "fashion":
+        return FASHION_DB_SLOT
+    if idef.get("type") != "equipment":
+        return None
+    if idef.get("slot") == 0 or "weapon_class" in idef:
+        return 0                       # weapon
+    if "pos" in idef:
+        return idef["pos"] + ARMOR_DB_SLOT_OFFSET   # client Position -> slot
+    return idef.get("slot")            # legacy placeholders
 
 
 def starter_armor(profession: int):
@@ -289,8 +314,9 @@ def starter_armor(profession: int):
     return out
 
 
-# EQUIP_QUALITY on the wire for each ATTR_POOLS quality level (0..3).
-QUALITY_WIRE = {0: 1, 1: 2, 2: 3, 3: 4}
+# The random stat's ATTR_POOLS quality (0..3) IS the EQUIP_QUALITY wire
+# value (WHITE=0 GREEN=1 BLUE=2 PURPLE=3).
+QUALITY_WIRE = {0: 0, 1: 1, 2: 2, 3: 3}
 # roll weights: white 45% / green 30% / blue 18% / purple 7%
 QUALITY_WEIGHTS = ((0, 45), (1, 30), (2, 18), (3, 7))
 
@@ -325,25 +351,46 @@ def _pool_for(cls: int, tier: int, q: int):
     return pool
 
 
+# Skill rarity (the weapon skill's color): the client's SkillQualityData
+# table (recovered, keyed by skillId) carries the base skill id + the quality
+# weight table (white 100 / green 40 / blue 15 / purple 5 — 1 : 0.4 : 0.15 :
+# 0.05 odds). Weapon skills are IDs in the class's BaseSkills group and the
+# ROLLED QUALITY is what colors both the skill and the weapon itself.
+SKILL_QUALITY_WEIGHTS = ((0, 100), (1, 40), (2, 15), (3, 5))
+# per-quality skill multiplier (QualityData ModulusVal on the client): the
+# higher-rarity roll multiplies the skill's damage/fvalue contribution.
+SKILL_QUALITY_MODULUS = {0: 1.0, 1: 1.1, 2: 1.25, 3: 1.5}
+
+
+def _roll_skill_quality(rng):
+    total = sum(w for _, w in SKILL_QUALITY_WEIGHTS)
+    roll = rng.randrange(total)
+    acc = 0
+    for q, w in SKILL_QUALITY_WEIGHTS:
+        acc += w
+        if roll < acc:
+            return q
+    return 0
+
+
 def roll_weapon_instance(weapon_id: int, rng=None):
     """(quality_wire, attrs) for a weapon.
 
-    Rolls ONE random skill from the weapon's skill group at a random color;
-    the weapon's color IS the rolled skill's color. The attr entry carries
+    Rolls ONE random skill from the weapon's real BaseSkills group
+    (game_data.WEAPONS[id].skills: 101-104/201-204/301-304) at a rarity
+    drawn from the recovered SkillQualityData weights; the weapon's color IS
+    the rolled skill's rarity. The attr entry carries
     (index, attr_id, value, quality, skillId) — skillId is what the client
-    shows as the weapon's colored skill.
+    shows as the weapon's colored skill, quality is EQUIP_QUALITY 0..3.
     """
     import random as _random
     rng = rng or _random
     w = ITEMS.get(weapon_id, {})
-    cls = w.get("weapon_class", 0)
-    tier = w.get("tier", 1)
     skills = w.get("skills") or [101]
     skill = rng.choice(skills)
-    q = _roll_quality(rng)
-    aid, _pq, val, _pw = _pick_attr(_pool_for(cls, tier, q), rng)
+    q = _roll_skill_quality(rng)
     wire_q = QUALITY_WIRE[q]
-    return wire_q, [(0, aid, val, wire_q, str(skill))]
+    return wire_q, [(0, 0, 0, wire_q, str(skill))]
 
 
 def roll_armor_instance(armor_id: int, rng=None):
@@ -390,7 +437,6 @@ def roll_random_attrs(count: int = 2, rng=None):
     pool = rng.sample(RANDOM_ATTR_POOL, min(count, len(RANDOM_ATTR_POOL)))
     return [(i, aid, rng.randint(lo, hi))
             for i, (aid, lo, hi) in enumerate(pool)]
-
 # skills: real per-class skill groups from SkillData merged over the legacy
 # generic set
 SKILLS = {
@@ -400,7 +446,137 @@ SKILLS = {
 }
 SKILLS.update(REAL_SKILLS)
 
-# --- copy scenes / dungeons -------------------------------------------------
+# --- character attributes + power (the client's real formulas) --------------
+#
+# CharacterAttributeData (Assembly-CSharp.dll) is driven entirely by the
+# server's `attribute`/`attribute_all` sproto objects: base attrs in
+# `attribute`, base+equipment+skill totals in `attribute_all`. CombValue is
+# SERVER-AUTHORITATIVE (attribute_other.combValue — every UI just prints it),
+# and per GameItem.GetItemCombatVal the server-side power contribution of a
+# piece of gear is Σ(attr value × GET_ATTRIBUTE_COMBAT_VAL(attid)) with the
+# per-profession weights in game_data.ATTRIBUTE_COMBAT_VAL.
+
+# Base character attributes (the revival's baseline — the client adds the
+# gear/skill contributions on top of whatever the server sends).
+CHAR_BASE_ATTRS = {
+    1001: 50,      # atk
+    1002: 1000,    # hp
+    1003: 25,      # def
+    1004: 40,      # hit
+    1005: 20,      # dge/eva
+    1006: 15,      # cri
+    1007: 10,      # res
+}
+# Level growth: the client's EquipData.LevelScale convention (LevelScale
+# 10000 = ×1.0 at item level 0) — each character level adds this fraction of
+# the base attrs.
+CHAR_LEVEL_SCALE = 0.02
+
+
+def _attr_weight(profession: int, attr_id: int) -> float:
+    return GD.ATTRIBUTE_COMBAT_VAL.get(profession, {}).get(attr_id, 0.0)
+
+
+def instance_attrs(instance: dict) -> list:
+    """[(attr_id, value)] carried by a persisted item instance.
+
+    `attrs` is [(index, attr_id, value, quality, skillId)] in db order
+    (the wire format used by gameitem.random_attri).
+    """
+    return [(a[1], a[2]) for a in instance.get("attrs", [])
+            if len(a) > 2 and a[2]]
+
+
+def instance_combat_value(profession: int, instance: dict,
+                          item_id: int) -> int:
+    """GameItem.GetItemCombatVal() for one equipped instance.
+
+    Equip: Σ(base attrs + random attrs) × profession weight.
+    Weapons (client SubType 0) EXCLUDE random attrs (the client checks
+    mItemData.SubType != 0 — the random slot on a weapon is its skill, whose
+    power rides the character skill group instead).
+    """
+    idef = ITEMS.get(item_id, {})
+    is_weapon = idef.get("slot") == 0 or "weapon_class" in idef
+    total = 0.0
+    for idx, a in enumerate(instance.get("attrs", [])):
+        val = a[2] if len(a) > 2 else 0
+        if not val:
+            continue
+        if is_weapon and idx >= 1:
+            continue            # weapons: no random-attr combat contribution
+        total += val * _attr_weight(profession, a[1])
+    return int(total)
+
+
+def weapon_skill_bonus(profession: int, instance: dict,
+                       item_id: int) -> int:
+    """Combat contribution of a weapon's rolled skill.
+
+    SkillData.fvalue is the skill's power value; the client's
+    GetAttrValByQualityAndLevel applies the quality ModulusVal (QualityData)
+    — replicated here with SKILL_QUALITY_MODULUS so rarity raises power.
+    """
+    idef = ITEMS.get(item_id, {})
+    if idef.get("slot") != 0 and "weapon_class" not in idef:
+        return 0
+    for a in instance.get("attrs", []):
+        skill = a[4] if len(a) > 4 else None
+        if skill:
+            try:
+                sid = int(skill)
+            except (TypeError, ValueError):
+                continue
+            sdef = SKILLS.get(sid) or {}
+            fvalue = sdef.get("damage", 0)
+            q = a[3] if len(a) > 3 and a[3] in SKILL_QUALITY_MODULUS else 0
+            return int(fvalue * SKILL_QUALITY_MODULUS[q]
+                       * _attr_weight(profession, 1001))
+    return 0
+
+
+def character_attributes(db, char_id: int, level: int,
+                         profession: int) -> dict:
+    """Final attribute map for a character: base + level growth + every
+    equipped instance's attrs + weapon skill bonus.
+
+    Recomputed ONLY on the change events (equip/unequip/upgrade/chest/
+    level-up) and persisted into characters.data — never at login.
+    """
+    attrs = dict(CHAR_BASE_ATTRS)
+    growth = 1.0 + CHAR_LEVEL_SCALE * max(0, level - 1)
+    for aid in attrs:
+        attrs[aid] = int(attrs[aid] * growth)
+    total_power = 0.0
+    for inst in db.list_equipped_instances(char_id):
+        total_power += instance_combat_value(profession, inst, inst["item_id"])
+        total_power += weapon_skill_bonus(profession, inst, inst["item_id"])
+        for aid, val in instance_attrs(inst):
+            attrs[aid] = attrs.get(aid, 0) + val
+    # skills: each learned skill level adds a flat power tick (SkillData
+    # fvalue scaled by level — IsUpgrade==1 skills only on the client).
+    for row in db.list_skills(char_id):
+        sdef = SKILLS.get(row["skill_id"]) or {}
+        if sdef.get("damage"):
+            total_power += sdef["damage"] * max(0, row["level"] - 1) \
+                * _attr_weight(profession, 1001) * 0.1
+    attrs["power"] = int(total_power)
+    return attrs
+
+
+def recalc_character(db, char_id: int) -> dict:
+    """Recompute + persist (characters.data) the attribute set; returns it."""
+    row = db.get_character(char_id)
+    if row is None:
+        return {}
+    attrs = character_attributes(db, char_id, row["level"], row["profession"])
+    db.save_attributes(char_id, attrs)
+    max_hp = attrs.get(1002, 100)
+    hp, _old_max = db.get_hp(char_id)
+    db.set_max_hp(char_id, max_hp)
+    if hp > max_hp:
+        db.set_hp(char_id, max_hp)
+    return attrs
 # Wave-based PvE instances entered from the open world (client flow:
 # enter_copy_scene -> npc_create per wave -> single_copy_scene_npc_die ->
 # next_wave -> copy_scene_result). The client drives combat; the server

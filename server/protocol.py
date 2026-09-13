@@ -672,13 +672,16 @@ REQUEST_SPECS = {
     SELL_ITEM: {0: "i", 1: "i"},
     ASK_SHOP_LIST: {0: "i"},
     BUY_SHOP_ITEM: {0: "i", 1: "i"},
-    # inventory / equipment (provisional)
-    EQUIP_ITEM: {0: "i"},          # item instance id
-    UNEQUIP_ITEM: {0: "i"},        # equip slot
-    EQUIP_BADGE: {0: "i"},
-    UNEQUIP_BADGE: {0: "i"},
-    EQUIP_FASHION_ITEM: {0: "i"},
-    UNEQUIP_FASHION_ITEM: {0: "i"},
+    # inventory / equipment — REAL decompiled request schemas:
+    # equip_item.request {indexId(0) i, inhert(1) b}, unequip_item.request
+    # {indexId(0) i} (ObjMainPlayer.EquipItem/UnEquipItem) — both carry the
+    # ITEM INSTANCE id (gameitem.indexId), never a slot number.
+    EQUIP_ITEM: {0: "i", 1: "b"},
+    UNEQUIP_ITEM: {0: "i"},        # item instance id (indexId)
+    EQUIP_BADGE: {0: "i", 1: "i"},  # indexId, pos
+    UNEQUIP_BADGE: {0: "i"},       # indexId
+    EQUIP_FASHION_ITEM: {0: "i"},  # indexId
+    UNEQUIP_FASHION_ITEM: {0: "i"},  # indexId
     OPEN_ITEM_PACKAGE: {0: "i"},   # item id of the package
     PUT_ITEM_STORAGEPACK: {0: "i", 1: "i"},   # item id, count
     TAKE_ITEM_STORAGEPACK: {0: "i", 1: "i"},  # item id, count
@@ -815,6 +818,8 @@ RESPONSE_SPECS = {
     UNEQUIP_BADGE: {0: "i"},
     EQUIP_FASHION_ITEM: {0: "i"},
     UNEQUIP_FASHION_ITEM: {0: "i"},
+    # equip/unequip responses have NO push type: the decompiled client
+    # dispatches them by session only, with an errno-style int body.
     RET_OPEN_ITEM_PACKAGE: {0: "i", 1: "oa"},
     RET_REQUEST_UPDATE_STORAGEPACK: {0: "oa"},
     REQUEST_RANDOM_NAME: {0: "s"},
@@ -1320,7 +1325,8 @@ def encode_npc(npc_id: int, kind: int, level: int, hp: int, max_hp: int,
 
 def encode_aoi_update_attribute(char_id: int, hp: int, exp: int,
                                 level: int, max_hp: int, gold: int = 0,
-                                diamond: int = 0) -> bytes:
+                                diamond: int = 0, attrs: dict = None,
+                                comb_value: int = None) -> bytes:
     """SprotoType.aoi_update_attribute.request {character(0)} where character
     is a character_aoi_attribute blob: id(0) attribute_other(1) attribute(2)
     attribute_all(3) visual(4) property(5). aoi_update_attribute_handler on
@@ -1328,15 +1334,34 @@ def encode_aoi_update_attribute(char_id: int, hp: int, exp: int,
     player — this is the real post-kill attribute sync (NOT sync_common_data,
     whose tag 0 is serverTime on the client!).
     """
-    attribute = _enc.encode_object({
-        0: max_hp,            # max_hp
-        1: exp,               # exp
-        2: 20,                # atk
-        3: 100,               # def
-    })
-    attribute_other = _enc.encode_object({
-        0: hp, 1: exp, 2: level,
-    })
+    if attrs:
+        # real recalculated attribute set (persisted on change events):
+        # attribute_other.combValue (field 3) carries the server power so
+        # the client's profile UI updates after equip/unequip/chest events.
+        attribute = _enc.encode_object({
+            0: attrs.get(1002, max_hp),   # max_hp
+            1: exp,                       # exp
+            2: attrs.get(1001, 20),       # atk
+            3: attrs.get(1003, 100),      # def
+            4: attrs.get(1004, 10),       # hit
+            5: attrs.get(1005, 5),        # eva
+            6: attrs.get(1006, 0),        # cri
+            7: attrs.get(1007, 0),        # res
+        })
+        attribute_other = _enc.encode_object({
+            0: hp, 1: exp, 2: level,
+            3: comb_value if comb_value is not None else 0,
+        })
+    else:
+        attribute = _enc.encode_object({
+            0: max_hp,            # max_hp
+            1: exp,               # exp
+            2: 20,                # atk
+            3: 100,               # def
+        })
+        attribute_other = _enc.encode_object({
+            0: hp, 1: exp, 2: level,
+        })
     character = _enc.encode_object({
         0: char_id,
         1: attribute_other,

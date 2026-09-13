@@ -69,9 +69,22 @@ CREATE TABLE IF NOT EXISTS missions (
 
 CREATE TABLE IF NOT EXISTS equip_slots (
     char_id     INTEGER NOT NULL REFERENCES characters(id),
-    slot        INTEGER NOT NULL,             -- 0 weapon, 1 armor, 2 badge, 3 fashion
+    slot        INTEGER NOT NULL,             -- client EQUIP_BACKPACK_TYPE
+                                              -- 0 weapon .. 5 necklace;
+                                              -- 8 badge, 9 fashion
     item_id     INTEGER NOT NULL,
+    index_id    INTEGER,                      -- item_instances.index_id
     UNIQUE(char_id, slot)
+);
+
+CREATE TABLE IF NOT EXISTS item_instances (
+    index_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    char_id     INTEGER NOT NULL REFERENCES characters(id),
+    item_id     INTEGER NOT NULL,
+    quality     INTEGER NOT NULL DEFAULT 0,   -- EQUIP_QUALITY 0=WHITE..3=PURPLE
+    level       INTEGER NOT NULL DEFAULT 0,   -- upgrade level
+    attrs       TEXT NOT NULL DEFAULT '[]',   -- JSON [(attr_id,val,quality,skillId)]
+    created_at  INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS storagepack (
@@ -204,7 +217,32 @@ class Database:
         # LoadingScene placeholder and hangs the world-entry loader
         self._conn.execute(
             "UPDATE characters SET map_id = '11' WHERE map_id = '1'")
+        # migrate pre-instance databases: equip_slots.index_id + legacy armor
+        # slot renumbering (old slots 3..7 = helmet..necklace -> 1..5) and
+        # badge slot 2 -> 8 / fashion slot 3 -> 9 so they match the client's
+        # EQUIP_BACKPACK_TYPE numbering going forward. Renumbering runs ONLY
+        # on databases that predate index_id — re-running it on migrated
+        # databases would corrupt the (now legitimate) slots 2/3 armor rows.
+        ecols = {r["name"] for r in self._conn.execute(
+            "PRAGMA table_info(equip_slots)")}
+        legacy_equips = "index_id" not in ecols
+        if legacy_equips:
+            self._conn.execute(
+                "ALTER TABLE equip_slots ADD COLUMN index_id INTEGER")
+            self._conn.execute(
+                "UPDATE equip_slots SET slot = slot - 2"
+                " WHERE slot >= 3 AND slot <= 7")
+            self._conn.execute(
+                "UPDATE equip_slots SET slot = 8 WHERE slot = 2")
+            self._conn.execute(
+                "UPDATE equip_slots SET slot = 9 WHERE slot = 3")
         self._conn.commit()
+        # one-time instance migration: legacy rows referenced bare item ids
+        # with no index_id — roll a persisted instance for each so equipment
+        # already on existing accounts keeps stable attrs/colors.
+        if self.get_flag_row("_instance_migration_done") is None:
+            self._migrate_equips_to_instances()
+            self.set_flag(0, "_instance_migration_done", 1)
 
     # -- accounts -----------------------------------------------------
     def create_account(self):
@@ -395,9 +433,11 @@ class Database:
         while exp >= 1000 * level:
             exp -= 1000 * level
             level += 1
+            # level-up is a change event: attrs (and thus max_hp) are
+            # recalculated by handlers.economy.recalc_character afterwards.
             self._conn.execute(
-                "UPDATE characters SET max_hp = max_hp + 10, hp = max_hp + 10"
-                " WHERE id = ?", (char_id,))
+                "UPDATE characters SET max_hp = max_hp + 10 WHERE id = ?",
+                (char_id,))
         self._conn.execute(
             "UPDATE characters SET level = ?, exp = ? WHERE id = ?",
             (level, exp, char_id),
@@ -422,6 +462,130 @@ class Database:
         self._conn.commit()
         return hp
 
+    def set_max_hp(self, char_id: int, max_hp: int) -> int:
+        self._conn.execute(
+            "UPDATE characters SET max_hp = ? WHERE id = ?",
+            (max(1, int(max_hp)), char_id))
+        self._conn.commit()
+        return max_hp
+
+    # -- persisted character attributes -----------------------------------
+    # The attribute set is written ONLY on change events (equip/unequip/
+    # upgrade/chest/level-up) and loaded verbatim at login — never rolled.
+    def save_attributes(self, char_id: int, attrs: dict) -> None:
+        data = self._get_data(char_id)
+        data["attributes"] = attrs
+        self._conn.execute(
+            "UPDATE characters SET data = ? WHERE id = ?",
+            (json.dumps(data), char_id))
+        self._conn.commit()
+
+    def load_attributes(self, char_id: int) -> dict:
+        attrs = self._get_data(char_id).get("attributes") or {}
+        # JSON keys are strings; normalize back to int attr ids so
+        # attrs.get(1001)-style lookups work everywhere
+        out = {}
+        for k, v in attrs.items():
+            try:
+                out[int(k)] = v
+            except (TypeError, ValueError):
+                out[k] = v          # "power" and other named keys
+        return out
+
+    def _get_data(self, char_id: int) -> dict:
+        row = self._conn.execute(
+            "SELECT data FROM characters WHERE id = ?", (char_id,)
+        ).fetchone()
+        try:
+            return json.loads(row["data"]) if row else {}
+        except (TypeError, ValueError):
+            return {}
+
+    # -- item instances (rolled attrs/colors persist with the item) -------
+    def create_instance(self, char_id: int, item_id: int, quality: int = 0,
+                        attrs: list = None, level: int = 0) -> int:
+        """Insert a rolled item instance; returns its stable index_id."""
+        cur = self._conn.execute(
+            "INSERT INTO item_instances (char_id, item_id, quality, level,"
+            " attrs, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (char_id, item_id, quality, level,
+             json.dumps(attrs or []), int(time.time())),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_instance(self, index_id: int):
+        row = self._conn.execute(
+            "SELECT * FROM item_instances WHERE index_id = ?", (index_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        out = dict(row)
+        out["attrs"] = json.loads(out["attrs"])
+        return out
+
+    def list_instances(self, char_id: int) -> list:
+        """All rolled instances for a character (backpack + equipped)."""
+        out = []
+        for row in self._conn.execute(
+                "SELECT * FROM item_instances WHERE char_id = ?"
+                " ORDER BY index_id", (char_id,)):
+            d = dict(row)
+            d["attrs"] = json.loads(d["attrs"])
+            out.append(d)
+        return out
+
+    def find_instances(self, char_id: int, item_id: int) -> list:
+        """Instances of one item id, oldest first."""
+        out = []
+        for row in self._conn.execute(
+                "SELECT * FROM item_instances WHERE char_id = ? AND item_id = ?"
+                " ORDER BY index_id", (char_id, item_id)):
+            d = dict(row)
+            d["attrs"] = json.loads(d["attrs"])
+            out.append(d)
+        return out
+
+    def set_instance_level(self, index_id: int, level: int) -> None:
+        self._conn.execute(
+            "UPDATE item_instances SET level = ? WHERE index_id = ?",
+            (level, index_id))
+        self._conn.commit()
+
+    def delete_instance(self, index_id: int) -> None:
+        self._conn.execute(
+            "DELETE FROM item_instances WHERE index_id = ?", (index_id,))
+        self._conn.commit()
+
+    def _migrate_equips_to_instances(self) -> None:
+        """Legacy rows reference a bare item id with no index_id; roll and
+        persist an instance per equipped item so existing accounts keep
+        stable attrs/colors across this upgrade."""
+        import random
+        from . import economy
+        for row in self._conn.execute(
+                "SELECT rowid AS rid, char_id, slot, item_id FROM equip_slots"
+                " WHERE index_id IS NULL").fetchall():
+            if row["slot"] in (8, 9):
+                continue            # badge/fashion have no rolled attrs
+            idef = economy.ITEMS.get(row["item_id"], {})
+            if idef.get("slot") == 0 or "weapon_class" in idef:
+                q, attrs = economy.roll_weapon_instance(row["item_id"])
+            else:
+                q, attrs = economy.roll_armor_instance(row["item_id"],
+                                                        random)
+            iid = self.create_instance(row["char_id"], row["item_id"], q,
+                                       attrs)
+            self._conn.execute(
+                "UPDATE equip_slots SET index_id = ? WHERE rowid = ?",
+                (iid, row["rid"]))
+        self._conn.commit()
+
+    def get_flag_row(self, key: str):
+        return self._conn.execute(
+            "SELECT value FROM progress WHERE char_id = 0 AND key = ?",
+            (key,)).fetchone()
+
     # -- equipment / storage ---------------------------------------------
     def get_equipped(self, char_id: int, slot: int):
         row = self._conn.execute(
@@ -430,22 +594,54 @@ class Database:
         ).fetchone()
         return row["item_id"] if row else None
 
-    def set_equipped(self, char_id: int, slot: int, item_id) -> None:
+    def get_equipped_index(self, char_id: int, slot: int):
+        """The instance index_id equipped in `slot` (None if empty)."""
+        row = self._conn.execute(
+            "SELECT index_id FROM equip_slots WHERE char_id = ? AND slot = ?",
+            (char_id, slot),
+        ).fetchone()
+        return row["index_id"] if row else None
+
+    def find_slot_by_index(self, char_id: int, index_id: int):
+        """The equip slot holding `index_id`, or None."""
+        row = self._conn.execute(
+            "SELECT slot FROM equip_slots WHERE char_id = ? AND index_id = ?",
+            (char_id, index_id),
+        ).fetchone()
+        return row["slot"] if row else None
+
+    def set_equipped(self, char_id: int, slot: int, item_id,
+                     index_id: int = None) -> None:
         self._conn.execute(
             "DELETE FROM equip_slots WHERE char_id = ? AND slot = ?",
             (char_id, slot),
         )
         if item_id is not None:
             self._conn.execute(
-                "INSERT INTO equip_slots (char_id, slot, item_id) VALUES (?, ?, ?)",
-                (char_id, slot, item_id),
+                "INSERT INTO equip_slots (char_id, slot, item_id, index_id)"
+                " VALUES (?, ?, ?, ?)",
+                (char_id, slot, item_id, index_id),
             )
         self._conn.commit()
 
     def list_equipped(self, char_id: int):
         return self._conn.execute(
-            "SELECT slot, item_id FROM equip_slots WHERE char_id = ?", (char_id,)
+            "SELECT slot, item_id, index_id FROM equip_slots WHERE char_id = ?",
+            (char_id,),
         ).fetchall()
+
+    def list_equipped_instances(self, char_id: int) -> list:
+        """Full rolled instances for every equipped slot (attribute/power
+        recalculation). Items without a rolled instance (badge/fashion or
+        legacy rows) are skipped."""
+        out = []
+        for row in self._conn.execute(
+                "SELECT index_id FROM equip_slots WHERE char_id = ?"
+                " AND index_id IS NOT NULL", (char_id,)):
+            inst = self.get_instance(row["index_id"])
+            if inst is not None:
+                out.append(inst)
+        return out
 
     def list_storage(self, char_id: int):
         return self._conn.execute(

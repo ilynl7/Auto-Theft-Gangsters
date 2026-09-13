@@ -187,8 +187,17 @@ def _encode_aoi_remove(char_id: int) -> bytes:
 #                       WeaponId(5) showType(10) MountId(12) mount_state(13)
 #                       mount_color(14)
 #   runtime_agent:      attribute(6) attribute_all(7)  (both SprotoType.attribute)
-#   attribute:          max_hp(0) exp(1) atk(2) def(3) hit(4) eva(5) cri(6)
-#                       res(7) mov(13) rec(14)
+#   attribute (SprotoType.attribute.cs, 25 fields — CharacterAttributeData.
+#   InitData reads ALL of these; exd/exr/crd/crr/anti_stun/anti_knock_down
+#   are ×10000 fixed-point, speed = mov/100):
+#     max_hp(0) exp(1) atk(2) def(3) hit(4) eva(5) cri(6) res(7) exd(8)
+#     exr(9) crd(10) crr(11) defa(12) mov(13) rec(14) anti_stun(15)
+#     anti_knock_down(16) dgea(17) resa(18) hita(19) cria(20) ate(21)
+#     satm(22) satc(23) satp(24)
+#
+# Client EQUIP_BACKPACK_TYPE slots: WEAPON=0 HEAD=1 BODY=2 LEG=3 BELT=4
+# NECKLACE=5. The db adds badge(8)/fashion(9) so all indexes stay unique.
+# On the character.equip(9) map the indexId (slot+1) keys the gameitem.
 
 # CharacterModelData row ids (from the APK's Data.bundle): 100=XD_A
 # (Batfighter), 104=QJ_A (Boxer), 105=NQS_A (Gunner). Body parts live in
@@ -229,21 +238,35 @@ def _visual_blob(profession: int, name: str) -> bytes:
     })
 
 
-def _attribute_blob(hp: int, exp: int, atk: int = 10) -> bytes:
+def _attribute_blob(hp: int, exp: int, atk: int = 10, attrs: dict = None) -> bytes:
+    """Full SprotoType.attribute — CharacterAttributeData.InitData reads every
+    field, so all 25 arrive (values from the persisted attribute set when
+    given; the ×10000 fields are the client's fixed-point convention)."""
+    attrs = attrs or {}
     return P._enc.encode_object({
-        0: hp,                # max_hp
-        1: exp,
-        2: atk,
-        3: 2,                 # def
-        4: 10,                # hit
-        5: 5,                 # eva
-        13: _DEFAULT_MOV,     # mov -> client speed = mov / 100
-        14: 0,                # rec
+        0: hp,                    # max_hp
+        1: exp,                   # exp
+        2: attrs.get(1001, atk),  # atk
+        3: attrs.get(1003, 2),    # def
+        4: attrs.get(1004, 10),   # hit
+        5: attrs.get(1005, 5),    # eva (DGE)
+        6: attrs.get(1006, 0),    # cri
+        7: attrs.get(1007, 0),    # res
+        8: 0, 9: 0,               # exd / exr (×10000)
+        10: 0, 11: 0,             # crd / crr (×10000)
+        12: 0,                    # defa
+        13: _DEFAULT_MOV,         # mov -> client speed = mov / 100
+        14: 0,                    # rec
+        15: 0, 16: 0,             # anti_stun / anti_knock_down (×10000)
+        17: 0, 18: 0,             # dgea / resa
+        19: 0, 20: 0,             # hita / cria
+        21: 0,                    # ate
+        22: 0, 23: 0, 24: 0,      # satm / satc / satp
     })
 
 
-def _runtime_blob(hp: int, exp: int) -> bytes:
-    attr = _attribute_blob(hp, exp)
+def _runtime_blob(hp: int, exp: int, attrs: dict = None) -> bytes:
+    attr = _attribute_blob(hp, exp, attrs=attrs)
     return P._enc.encode_object({6: attr, 7: attr})
 
 
@@ -285,7 +308,8 @@ def encode_character_blob(char_id: int, name: str, level: int,
                           exp: int = 0, gold: int = 0, diamond: int = 0,
                           hp: int = None, skills: list = None,
                           comb_value: int = 0,
-                          equips: list = None) -> bytes:
+                          equips: list = None,
+                          attrs: dict = None) -> bytes:
     """Full SprotoType.character blob for main_player_create.
 
     The client's ObjInitPlayerData.InitData(character) hard-dereferences
@@ -298,9 +322,16 @@ def encode_character_blob(char_id: int, name: str, level: int,
     `skills` is an optional [(skill_id, level)] list encoded at tag 8 as
     map<string, skill_info>; skillId is decoded with read_string, so the id
     MUST be a string ("101"), never an integer.
+
+    `attrs` is the persisted attribute map (economy.CHAR_BASE_ATTRS + gear);
+    it fills both runtime.attribute and runtime.attribute_all so the client's
+    CurATK/CurDEF/... match the server-authoritative combValue.
     """
     if hp is None:
         hp, _ = _char_stats(level, exp)
+    if attrs is not None:
+        # max_hp (attribute field 0) comes from the persisted attribute set.
+        hp = attrs.get(1002, hp)
     fields = {
         0: char_id,
         1: _general_blob(name, profession, line_index, map_id),
@@ -308,7 +339,7 @@ def encode_character_blob(char_id: int, name: str, level: int,
         5: _property_blob(gold, diamond),
         6: _visual_blob(profession, name),
         7: pos_blob,
-        13: _runtime_blob(hp, exp),
+        13: _runtime_blob(hp, exp, attrs),
         15: 2,                # download = 2 -> IsFinishDownload = true
     }
     if skills:
@@ -320,8 +351,8 @@ def encode_character_blob(char_id: int, name: str, level: int,
         # The client SyncPacks these into its EQUIPPACK container at spawn,
         # which is what puts the gear on the character's back.
         equip_blobs = [P.encode_gameitem(idx, iid, stack=1, quality=q,
-                                         level=lvl, random_attris=attrs)
-                       for idx, iid, q, lvl, attrs in equips]
+                                         level=lvl, random_attris=attrs_)
+                       for idx, iid, q, lvl, attrs_ in equips]
         fields[9] = P._enc.encode_object_array(equip_blobs)
     return P._enc.encode_object(fields)
 
@@ -389,22 +420,34 @@ def encode_aoi_update_move(player: WorldPlayer) -> bytes:
 
 
 def comb_value_for(db, char_id: int, level: int) -> int:
-    """Real combat power: base attack + equipped weapon/badge power, scaled
-    like the client's CombValue (atk + hp/10)."""
-    attack = economy.PLAYER_BASE_ATTACK
-    weapon = db.get_equipped(char_id, 0)
-    if weapon is not None:
-        attack += economy.ITEMS.get(weapon, {}).get("power", 0)
-    badge = db.get_equipped(char_id, 2)
-    if badge is not None:
-        attack += economy.ITEMS.get(badge, {}).get("power", 0)
-    hp = db.get_hp(char_id)[1]
-    return attack * 10 + hp // 10 + level
+    """Server-authoritative combValue (attribute_other.combValue — every
+    client UI prints this verbatim).
+
+    Formula port: GetItemCombatVal() per equipped instance — Σ(attr ×
+    GET_ATTRIBUTE_COMBAT_VAL) with the profession's weights — plus the
+    weapon skill bonus and learned-skill ticks, on top of the base
+    attribute power. The value is PERSISTED with the attribute set and only
+    recomputed on change events (equip/unequip/upgrade/chest/level-up).
+    """
+    saved = db.load_attributes(char_id)
+    if saved.get("power") is not None:
+        return int(saved["power"])
+    # migration: no saved attribute set yet (first login after this fix, or
+    # a brand-new character) — compute from the client formula now.
+    row = db.get_character(char_id)
+    if row is None:
+        return 0
+    from . import economy as _eco
+    attrs = _eco.character_attributes(db, char_id, row["level"],
+                                      row["profession"])
+    return int(attrs.get("power", 0))
 
 
 def encode_main_player_create(player: WorldPlayer,
                               skills: list = None,
-                              equips: list = None) -> dict:
+                              equips: list = None,
+                              attrs: dict = None,
+                              hp: int = None) -> dict:
     """Field dict for the main_player_create PUSH body:
     {character(0), movement(1)}.
 
@@ -426,7 +469,8 @@ def encode_main_player_create(player: WorldPlayer,
         player.char_id, player.name, player.level, player.movement_blob(),
         profession=player.profession, line_index=player.line_index,
         map_id=player.map_id, skills=skills, equips=equips,
-        comb_value=getattr(player, "comb_value", 0))
+        comb_value=getattr(player, "comb_value", 0),
+        attrs=attrs, hp=hp)
     return {
         0: character,
         1: player.movement_blob(),

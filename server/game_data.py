@@ -181,6 +181,42 @@ GUILD_BATTLE = {
     "rewards": {1: 37001, 2: 37002, 3: 37003},   # top-3 reward drop ids
 }
 
+# --- per-profession attribute combat weights (recovered) --------------------
+#
+# GameDefine.ATTRIBUTE_COMBAT_VAL_DIC_XD / _QJ / _NQS (Assembly-CSharp.dll):
+# the client's GameItem.GetItemCombatVal() multiplies every item attribute by
+# GET_ATTRIBUTE_COMBAT_VAL(attid), which looks the attr id up in the current
+# profession's table. Keyed by ATTRIBUTE_TYPE: 1001 ATK, 1002 HP, 1003 DEF,
+# 1004 HIT, 1005 DGE(eva), 1006 CRI, 1007 RES, 1008 EXD, 1009 EXR, 1012 CRD,
+# 1013 CRR; 2001+ are skill-add ids (all weighted 5).
+ATTRIBUTE_COMBAT_VAL = {
+    0: {  # XD — Batfighter
+        1001: 16.0, 1002: 1.0, 1003: 11.0, 1004: 2.0, 1005: 5.5,
+        1006: 10.0, 1007: 10.0, 1008: 5.0, 1009: 5.0, 1012: 5.0, 1013: 5.0,
+        2001: 5.0, 2002: 5.0, 2003: 5.0, 2004: 5.0, 2005: 5.0, 2006: 5.0,
+        2007: 5.0, 2008: 5.0, 2009: 5.0, 2012: 5.0, 2013: 5.0,
+    },
+    1: {  # QJ — Boxer
+        1001: 20.0, 1002: 1.0, 1003: 12.0, 1004: 1.0, 1005: 6.0,
+        1006: 5.0, 1007: 10.0, 1008: 5.0, 1009: 5.0, 1012: 5.0, 1013: 5.0,
+        2001: 5.0, 2002: 5.0, 2003: 5.0, 2004: 5.0, 2005: 5.0, 2006: 5.0,
+        2007: 5.0, 2008: 5.0, 2009: 5.0, 2012: 5.0, 2013: 5.0,
+    },
+    2: {  # NQS — Gunner
+        1001: 7.0, 1002: 1.0, 1003: 7.4, 1004: 3.0, 1005: 3.7,
+        1006: 15.0, 1007: 10.0, 1008: 5.0, 1009: 5.0, 1012: 5.0, 1013: 5.0,
+        2001: 5.0, 2002: 5.0, 2003: 5.0, 2004: 5.0, 2005: 5.0, 2006: 5.0,
+        2007: 5.0, 2008: 5.0, 2009: 5.0, 2012: 5.0, 2013: 5.0,
+    },
+}
+
+# ATTRIBUTE_TYPE names (client enum) for debugging/logs
+ATTRIBUTE_NAMES = {
+    1001: "atk", 1002: "hp", 1003: "def", 1004: "hit", 1005: "dge",
+    1006: "cri", 1007: "res", 1008: "exd", 1009: "exr", 1010: "rec",
+    1011: "mov", 1012: "crd", 1013: "crr",
+}
+
 # --- armor + random-attribute tables (recovered) -----------------------------
 
 # AUTO-GENERATED from the APK's Data.bundle (EquipData + EquipDrop tables).

@@ -129,11 +129,22 @@ async def test_equip_and_unequip_flow(server):
 
     resp = await c.rpc(P.EQUIP_BADGE, {0: 20})
     assert resp.body[0] == 0
-    assert db.get_equipped(char_id, 2) == 20
+    # badges live in their dedicated equip slot (8), fashion in 9
+    assert db.get_equipped(char_id, economy.BADGE_DB_SLOT) == 20
 
     resp = await c.rpc(P.EQUIP_FASHION_ITEM, {0: 31})
     assert resp.body[0] == 0
-    assert db.get_equipped(char_id, 3) == 31
+    assert db.get_equipped(char_id, economy.FASHION_DB_SLOT) == 31
+
+    # equipping creates a PERSISTED rolled instance linked to the slot
+    index_id = db.get_equipped_index(char_id, 0)
+    assert index_id is not None
+    inst = db.get_instance(index_id)
+    assert inst is not None and inst["item_id"] == 12
+
+    # attributes are recalculated and persisted on equip
+    attrs = db.load_attributes(char_id)
+    assert attrs.get("power", 0) > 0
 
     resp = await c.rpc(P.UNEQUIP_ITEM, {0: 1})
     assert resp.body[0] == 0
@@ -141,7 +152,15 @@ async def test_equip_and_unequip_flow(server):
 
     resp = await c.rpc(P.UNEQUIP_BADGE, {})
     assert resp.body[0] == 0
-    assert db.get_equipped(char_id, 2) is None
+    assert db.get_equipped(char_id, economy.BADGE_DB_SLOT) is None
+
+    # unequip recalculates: power drops when the weapon comes off
+    weapon_power = attrs.get("power")
+    resp = await c.rpc(P.UNEQUIP_ITEM, {0: 0})
+    assert resp.body[0] == 0
+    assert db.get_equipped(char_id, 0) is None
+    attrs_after = db.load_attributes(char_id)
+    assert attrs_after.get("power", 0) < weapon_power
 
     # equipping an item you do not own fails
     resp = await c.rpc(P.EQUIP_ITEM, {0: 11})

@@ -352,21 +352,32 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # skill group (economy.PROFESSIONS[prof].skills)
         prof_def = economy.PROFESSIONS[profession]
         start_weapon = (profession + 1) * 10000 + 1
+        char_id = row["id"]
         if start_weapon in economy.ITEMS:
-            self.server.db.add_item(row["id"], start_weapon, 1)
-            self.server.db.set_equipped(row["id"], 0, start_weapon)
+            self.server.db.add_item(char_id, start_weapon, 1)
+            self.server.db.set_equipped(char_id, 0, start_weapon)
         # Real tier-1 armor per profession: helmet(2)/chest(3)/legs(4)/
-        # belt(5)/necklace(6) -> db slots 3..7.
+        # belt(5)/necklace(6) -> db slots 1..5.
         for slot, item_id in economy.starter_armor(profession):
-            self.server.db.add_item(row["id"], item_id, 1)
-            self.server.db.set_equipped(row["id"], slot, item_id)
-        # legacy starter badge (badges get their own system pass later)
-        for slot, item_id in economy.STARTER_GEAR:
+            self.server.db.add_item(char_id, item_id, 1)
+            self.server.db.set_equipped(char_id, slot, item_id)
+        # starter badge lives in its dedicated slot (8) so it never collides
+        # with the six real equip slots
+        for _slot, item_id in economy.STARTER_GEAR:
             if item_id in economy.ITEMS:
-                self.server.db.add_item(row["id"], item_id, 1)
-                self.server.db.set_equipped(row["id"], slot, item_id)
+                self.server.db.add_item(char_id, item_id, 1)
+                self.server.db.set_equipped(char_id,
+                                            economy.BADGE_DB_SLOT, item_id)
         for skill_id in prof_def["skills"]:
-            self.server.db.learn_skill(row["id"], skill_id)
+            self.server.db.learn_skill(char_id, skill_id)
+        # Roll + persist a REAL instance for every starting piece ONCE (the
+        # rolled skill/colors/attrs become permanent for this character),
+        # then compute + persist the initial attribute set / power.
+        for slot, item_id, _idx in self.server.db.list_equipped(char_id):
+            idef = economy.ITEMS.get(item_id, {})
+            if idef:
+                self._get_or_create_instance(char_id, slot, item_id, idef)
+        economy.recalc_character(self.server.db, char_id)
         # character_create.response {character(0), errno(1)} — the client
         # reads .general.profession, .createtime and .attribute_other.level
         # off a character_overview, then immediately sends character_pick.
@@ -472,28 +483,19 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # main_player_create must arrive together with enter_map: the client
         # cannot send map_ready until the main player exists.
         # Equipped gear rides along as the character.equip gameitem map so
-        # the spawn handler SyncPacks it into the client's EQUIPPACK. Each
-        # piece gets a REAL rolled instance: weapons roll one random skill
-        # from their group (the skill's quality IS the weapon color) and
-        # armor rolls one random stat from the recovered ATTR_POOLS (the
-        # stat's quality IS the piece color) on top of its base attrs.
+        # the spawn handler SyncPacks it into the client's EQUIPPACK. Every
+        # piece is the PERSISTED rolled instance (index_id-linked): weapons
+        # keep the skill/color they rolled once at creation, armor keeps its
+        # rolled stat/color — never re-rolled at login.
         # (indexId, itemId, quality, level, random_attrs) - indexId must be
         # non-zero (0 is the client's "unknown" sentinel).
-        equips = []
-        for slot, item_id in self.server.db.list_equipped(wp.char_id):
-            if slot == 0 or item_id in economy.ARMOR_ITEMS:
-                quality, attrs = (
-                    economy.roll_weapon_instance(item_id) if slot == 0
-                    else economy.roll_armor_instance(item_id))
-            else:
-                quality = economy.STARTER_QUALITY
-                attrs = [(i, e[0], e[1], 0, "") for i, e in
-                         enumerate(economy.roll_random_attrs(2))]
-            equips.append((slot + 1, item_id, quality, 0, attrs))
+        equips = self._equipped_wire_items(wp.char_id)
         s.push(P.MAIN_PLAYER_CREATE, W.encode_main_player_create(
             wp, skills=[(r["skill_id"], r["level"])
                         for r in self.server.db.list_skills(wp.char_id)],
-            equips=equips))
+            equips=equips,
+            attrs=self.server.db.load_attributes(wp.char_id) or None,
+            hp=self.server.db.get_hp(wp.char_id)[1]))
 
     async def h_enter_map(self, s: Session, msg) -> None:
         # Legacy request form (tests / reconnect helpers). The real client
@@ -518,7 +520,12 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             "z": row["pos_z"], "o": row["pos_o"],
         }
         s.pending_world_player = wp
-        s.respond(msg, W.encode_main_player_create(wp))
+        s.respond(msg, W.encode_main_player_create(
+            wp, skills=[(r["skill_id"], r["level"])
+                        for r in self.server.db.list_skills(row["id"])],
+            equips=self._equipped_wire_items(row["id"]),
+            attrs=self.server.db.load_attributes(row["id"]) or None,
+            hp=self.server.db.get_hp(row["id"])[1]))
         for other in self.server.world.others(map_id, row["id"]):
             s.push(P.AOI_ADD, {0: W.encode_aoi_add(other)})
         for npc in self.server.world.npcs_in(map_id):
@@ -641,6 +648,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             db.add_currency(char_id, economy.CURRENCY_DIAMOND, diamond)
         if exp:
             db.add_exp(char_id, exp)
+            economy.recalc_character(self.server.db, char_id)
         for item_id, count in items.items():
             db.add_item(char_id, item_id, count)
         stacks = [P.encode_item_stack(int(k), v)
@@ -911,6 +919,68 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
     # ------------------------------------------------------------------
     # inventory / equipment
     # ------------------------------------------------------------------
+    def _get_or_create_instance(self, char_id: int, slot: int, item_id: int,
+                                idef: dict):
+        """Return the persisted instance for an equipped item, rolling one
+        ONLY if the slot has no instance yet (first equip). The rolled
+        quality/attrs/skill are stored on item_instances and stay with the
+        item for the item's lifetime — never re-rolled at login."""
+        db = self.server.db
+        index_id = db.get_equipped_index(char_id, slot)
+        if index_id is not None:
+            inst = db.get_instance(index_id)
+            if inst is not None and inst["item_id"] == item_id:
+                return inst
+        is_weapon = idef.get("slot") == 0 or "weapon_class" in idef
+        if is_weapon:
+            quality, attrs = economy.roll_weapon_instance(item_id)
+        elif item_id in economy.ARMOR_ITEMS:
+            quality, attrs = economy.roll_armor_instance(item_id)
+        else:
+            quality = economy.STARTER_QUALITY
+            attrs = [(i, e[0], e[1], 0, "") for i, e in
+                     enumerate(economy.roll_random_attrs(2))]
+        index_id = db.create_instance(char_id, item_id, quality, attrs)
+        db.set_equipped(char_id, slot, item_id, index_id)
+        return db.get_instance(index_id)
+
+    def _equipped_wire_items(self, char_id: int) -> list:
+        """[(indexId, itemId, quality, level, random_attrs)] for every
+        equipped slot, from the PERSISTED instances (no re-roll). Slots
+        without a stored instance yet get one created exactly once."""
+        equips = []
+        for slot, item_id, index_id in self.server.db.list_equipped(char_id):
+            idef = economy.ITEMS.get(item_id, {})
+            inst = self._get_or_create_instance(char_id, slot, item_id, idef) \
+                if index_id is None else self.server.db.get_instance(index_id)
+            if inst is None:
+                continue
+            # gameitem.random_attri entries: (index, attr_id, value,
+            # quality, skillId) — the client reads skillId as a string.
+            wire_attrs = [(a[0], a[1], a[2], a[3], str(a[4]) if len(a) > 4
+                           and a[4] else "") for a in inst["attrs"]]
+            equips.append((index_id if index_id is not None else inst["index_id"],
+                           item_id, inst["quality"], inst["level"],
+                           wire_attrs))
+        return equips
+
+    def _recalc_and_sync(self, s: Session, char_id: int) -> None:
+        """Recalculate the attribute set + power from the equipped instances
+        and skills, persist it (characters.data), and push the new values
+        with aoi_update_attribute. Called ONLY on change events."""
+        row = self.server.db.get_character(char_id)
+        if row is None:
+            return
+        attrs = economy.recalc_character(self.server.db, char_id)
+        level, exp = row["level"], row["exp"]
+        hp, max_hp = self.server.db.get_hp(char_id)
+        gold = self.server.db.get_currency(char_id, economy.CURRENCY_GOLD)
+        diamond = self.server.db.get_currency(char_id,
+                                              economy.CURRENCY_DIAMOND)
+        s.push(P.AOI_UPDATE_ATTRIBUTE, {0: P.encode_aoi_update_attribute(
+            char_id, hp, exp, level, max_hp, gold, diamond,
+            attrs=attrs, comb_value=attrs.get("power", 0))})
+
     def _sync_badges(self, s: Session, char_id: int) -> None:
         badges = [item for item in self.server.db.list_items(char_id)
                   if economy.ITEMS.get(item["item_id"], {}).get("type") == "badge"]
@@ -946,9 +1016,16 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             if idef["weapon_class"] != prof:
                 s.respond(msg, {0: 4})   # wrong profession
                 return
-        db.set_equipped(char_id, idef["slot"], item_id)
+        # slot: use the recovered client Position for armor pieces
+        # (Position p -> db slot p-1); weapons stay at slot 0.
+        slot = economy.slot_for(item_id)
+        if slot is None:
+            slot = idef.get("slot", 0)
+        # roll + persist a REAL instance on first equip; re-equips reuse it
+        self._get_or_create_instance(char_id, slot, item_id, idef)
         s.respond(msg, {0: 0})
         self._sync_backpack(s, char_id)
+        self._recalc_and_sync(s, char_id)
 
     def _unequip_slot(self, s: Session, msg, slot: int) -> None:
         db = self.server.db
@@ -956,14 +1033,28 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         if row is None:
             s.respond(msg, {0: 1})
             return
-        if db.get_equipped(row["id"], slot) is None:
+        char_id = row["id"]
+        # empty the slot (item stays in the backpack as its persisted
+        # instance) then recalc stats/power without it
+        if db.get_equipped(char_id, slot) is None:
             s.respond(msg, {0: 2})
             return
-        db.set_equipped(row["id"], slot, None)
+        db.set_equipped(char_id, slot, None)
         s.respond(msg, {0: 0})
+        self._recalc_and_sync(s, char_id)
 
     async def h_unequip_item(self, s: Session, msg) -> None:
-        await self._unequip_slot(s, msg, 1)  # armor
+        # unequip_item(117) carries the client EQUIP_BACKPACK_TYPE slot:
+        # 0 weapon, 1 head, 2 body, 3 legs, 4 belt, 5 necklace.
+        # The client's Position-2..6 armor rows map to db slots 1..5, so the
+        # wire slot already matches the db slot for 1..5.
+        slot = msg.body.get(0)
+        if slot is None or slot == 0:
+            await self._unequip_slot(s, msg, 0)   # legacy/body fallback
+        elif isinstance(slot, int) and 1 <= slot <= 5:
+            await self._unequip_slot(s, msg, slot)
+        else:
+            s.respond(msg, {0: 2})
 
     async def h_equip_badge(self, s: Session, msg) -> None:
         db = self.server.db
@@ -980,12 +1071,13 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         if db.get_item_count(char_id, item_id) < 1:
             s.respond(msg, {0: 3})
             return
-        db.set_equipped(char_id, 2, item_id)
+        db.set_equipped(char_id, economy.BADGE_DB_SLOT, item_id)
         s.respond(msg, {0: 0})
         self._sync_badges(s, char_id)
+        self._recalc_and_sync(s, char_id)
 
     async def h_unequip_badge(self, s: Session, msg) -> None:
-        await self._unequip_slot(s, msg, 2)
+        await self._unequip_slot(s, msg, economy.BADGE_DB_SLOT)
 
     async def h_equip_fashion(self, s: Session, msg) -> None:
         db = self.server.db
@@ -1002,12 +1094,12 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         if db.get_item_count(char_id, item_id) < 1:
             s.respond(msg, {0: 3})
             return
-        db.set_equipped(char_id, 3, item_id)
+        db.set_equipped(char_id, economy.FASHION_DB_SLOT, item_id)
         s.respond(msg, {0: 0})
         self._sync_fashion(s, char_id)
 
     async def h_unequip_fashion(self, s: Session, msg) -> None:
-        await self._unequip_slot(s, msg, 3)
+        await self._unequip_slot(s, msg, economy.FASHION_DB_SLOT)
 
     async def h_open_item_package(self, s: Session, msg) -> None:
         db = self.server.db
@@ -1035,6 +1127,10 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             stacks.append(P.encode_item_stack(iid, cnt))
         s.respond(msg, {0: 0, 1: sproto.encode_object_array(stacks)})
         self._sync_backpack(s, char_id)
+        # chest contents can include gear whose instances change the
+        # attribute set? (instances roll at equip time) — recalc keeps
+        # power in sync after reward pickups regardless.
+        self._recalc_and_sync(s, char_id)
 
     async def h_request_update_storagepack(self, s: Session, msg) -> None:
         row = self._require_char(s)
@@ -1103,15 +1199,15 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
     # combat / npcs
     # ------------------------------------------------------------------
     def _player_attack_power(self, char_id: int) -> int:
-        db = self.server.db
-        attack = economy.PLAYER_BASE_ATTACK
-        weapon = db.get_equipped(char_id, 0)
-        if weapon is not None:
-            attack += economy.ITEMS.get(weapon, {}).get("power", 0)
-        badge = db.get_equipped(char_id, 2)
-        if badge is not None:
-            attack += economy.ITEMS.get(badge, {}).get("power", 0)
-        return attack
+        # Server-authoritative power: the persisted attribute set's attack
+        # (base + gear + skill contributions, recalculated on change events)
+        # — the same value the client's attribute_all.atk prints.
+        attrs = self.server.db.load_attributes(char_id)
+        if attrs.get(1001):
+            return int(attrs[1001])
+        # migration: no saved set yet — compute it once now
+        attrs = economy.recalc_character(self.server.db, char_id)
+        return int(attrs.get(1001, economy.PLAYER_BASE_ATTACK))
 
     def _sync_skills(self, s: Session, char_id: int) -> None:
         # The client parses tag 0 as map<string, skill_info>: an object array
@@ -1200,9 +1296,12 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         gold_total = db.get_currency(wp.char_id, economy.CURRENCY_GOLD)
         hp, max_hp = db.get_hp(wp.char_id)
         # aoi_update_attribute is the client's real exp/level/hp/money sync
-        # (ExpLineRootLogic.UpdateExp).
+        # (ExpLineRootLogic.UpdateExp). A kill grants exp — a change event —
+        # so the attribute set (and max_hp) is recalculated and rides along.
+        attrs = economy.recalc_character(db, wp.char_id)
         s.push(P.AOI_UPDATE_ATTRIBUTE, {0: P.encode_aoi_update_attribute(
-            wp.char_id, hp, exp_left, level, max_hp, gold_total)})
+            wp.char_id, hp, exp_left, level, max_hp, gold_total,
+            attrs=attrs, comb_value=attrs.get("power", 0))})
         self._sync_backpack(s, wp.char_id)
         # Count the kill towards active kill-type missions (main-chain
         # KILL_TARGET_NPC/KILLMONSTER and side missions). The client matches
@@ -1301,6 +1400,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         level = db.learn_skill(char_id, skill_id)
         s.respond(msg, {0: 0})
         self._sync_skills(s, char_id)
+        self._recalc_and_sync(s, char_id)
 
     # ------------------------------------------------------------------
     # guilds
