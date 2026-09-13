@@ -492,6 +492,24 @@ class Database:
                 out[k] = v          # "power" and other named keys
         return out
 
+    # -- character random status (rolled once, persisted, never re-rolled) --
+    def get_random_status(self, char_id: int) -> dict:
+        out = {}
+        for k, v in (self._get_data(char_id).get("random_status") or {}).items():
+            try:
+                out[int(k)] = v
+            except (TypeError, ValueError):
+                out[k] = v
+        return out
+
+    def set_random_status(self, char_id: int, status: dict) -> None:
+        data = self._get_data(char_id)
+        data["random_status"] = status
+        self._conn.execute(
+            "UPDATE characters SET data = ? WHERE id = ?",
+            (json.dumps(data), char_id))
+        self._conn.commit()
+
     def _get_data(self, char_id: int) -> dict:
         row = self._conn.execute(
             "SELECT data FROM characters WHERE id = ?", (char_id,)

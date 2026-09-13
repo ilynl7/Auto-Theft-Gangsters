@@ -81,13 +81,24 @@ def _weapons():
             out[item_id] = {
                 "name": "%s Weapon Lv.%d" % (names[wtype], tier),
                 "class": wtype, "tier": tier, "atk": tier_atk[tier],
-                "skills": [(wtype + 1) * 100 + k
-                           for k in (1, 2, 3, 4, 5, 6)],
+                # the weapon's skill group = the class's 6-skill pool
+                # (WEAPON_SKILL_POOL); the basic attack (x01) is excluded —
+                # it is the weapon's base atk, not a skill
+                "skills": WEAPON_SKILL_POOL[wtype],
                 "slot": 0,
                 "equip_type": 2,       # ItemData type 2 = equipment
             }
     return out
 
+
+# WEAPON_SKILL_POOL: the 6 skills each weapon class carries. The class's
+# basic attack (the x01 chain opener) is NOT in the pool — the basic attack
+# is the weapon's base BSValue atk, never a "skill".
+WEAPON_SKILL_POOL = {
+    0: [102, 103, 104, 105, 106, 107],
+    1: [202, 203, 204, 205, 206, 207],
+    2: [302, 303, 304, 305, 306, 307],
+}
 
 WEAPONS = _weapons()
 
@@ -143,6 +154,9 @@ ITEMS = {
 
 # --- skills (real SkillData: per-class 6 skills — 3 normal attack chain
 # hits + dodge + 2 class actives) -------------------------------------------
+# WEAPON_SKILL_POOL: the 6 skills each weapon class carries. The class's
+# basic attack (the x01 chain opener) is NOT in the pool — the basic attack
+# is the weapon's base BSValue atk, never a "skill".
 SKILLS = {
     101: {"name": "Bat Combo 1", "class": 0, "damage": 8, "cd": 1.0},
     102: {"name": "Bat Combo 2", "class": 0, "damage": 8, "cd": 1.0},
@@ -150,18 +164,21 @@ SKILLS = {
     104: {"name": "Roll", "class": 0, "damage": 0, "cd": 3.0, "dodge": 1},
     105: {"name": "Bat Smash", "class": 0, "damage": 25, "cd": 6.0},
     106: {"name": "Whirl Bat", "class": 0, "damage": 40, "cd": 10.0},
+    107: {"name": "Home Run", "class": 0, "damage": 55, "cd": 15.0},
     201: {"name": "Straight Punch 1", "class": 1, "damage": 8, "cd": 1.0},
     202: {"name": "Straight Punch 2", "class": 1, "damage": 8, "cd": 1.0},
     203: {"name": "Straight Punch 3", "class": 1, "damage": 12, "cd": 1.0},
     204: {"name": "Sidestep", "class": 1, "damage": 0, "cd": 3.0, "dodge": 1},
     205: {"name": "Hook Barrage", "class": 1, "damage": 25, "cd": 6.0},
     206: {"name": "Uppercut", "class": 1, "damage": 40, "cd": 10.0},
+    207: {"name": "Bull Rush", "class": 1, "damage": 55, "cd": 15.0},
     301: {"name": "Snap Shot 1", "class": 2, "damage": 8, "cd": 1.0},
     302: {"name": "Snap Shot 2", "class": 2, "damage": 8, "cd": 1.0},
     303: {"name": "Snap Shot 3", "class": 2, "damage": 12, "cd": 1.0},
     304: {"name": "Backroll", "class": 2, "damage": 0, "cd": 3.0, "dodge": 1},
     305: {"name": "Rapid Fire", "class": 2, "damage": 25, "cd": 6.0},
     306: {"name": "Piercing Shot", "class": 2, "damage": 40, "cd": 10.0},
+    307: {"name": "Deadeye", "class": 2, "damage": 55, "cd": 15.0},
 }
 
 # --- guild battle (real GuildBattleData row 1501) ----------------------------

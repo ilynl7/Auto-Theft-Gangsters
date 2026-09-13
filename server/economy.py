@@ -376,20 +376,21 @@ def _roll_skill_quality(rng):
 def roll_weapon_instance(weapon_id: int, rng=None):
     """(quality_wire, attrs) for a weapon.
 
-    The weapon's attack is its base BSValue atk (base_attrs), NOT a skill —
-    skills are the character's 6 per-class actives. The rolled instance
-    carries ONE random skill from the weapon's class group (including the
-    class actives 105/106, 205/206, 305/306) at a rarity drawn from the
-    recovered SkillQualityData weights; the weapon's color IS the rolled
-    skill's rarity. The attr entry carries (index, attr_id, value, quality,
-    skillId) — skillId is what the client shows as the weapon's colored
-    skill, quality is EQUIP_QUALITY 0..3.
+    The weapon's attack is its base BSValue atk (attr 1001), NEVER a skill.
+    The rolled skill comes ONLY from the class's 6-skill pool
+    (game_data.WEAPON_SKILL_POOL — the basic attack x01 is excluded) at a
+    rarity drawn from the recovered SkillQualityData weights; the weapon's
+    color IS the rolled skill's rarity. The attr entry carries (index,
+    attr_id, value, quality, skillId) — skillId is what the client shows as
+    the weapon's colored skill, quality is EQUIP_QUALITY 0..3.
     """
     import random as _random
+    from . import game_data as GD
     rng = rng or _random
     w = ITEMS.get(weapon_id, {})
-    skills = w.get("skills") or [101]
-    skill = rng.choice(skills)
+    pool = GD.WEAPON_SKILL_POOL.get(w.get("weapon_class", 0)) \
+        or w.get("skills") or [102]
+    skill = rng.choice(pool)
     q = _roll_skill_quality(rng)
     wire_q = QUALITY_WIRE[q]
     # base atk rides the normal attribute slot (attr 1001); the random slot
@@ -585,12 +586,49 @@ def character_attributes(db, char_id: int, level: int,
     return attrs
 
 
+# --- character random status -------------------------------------------------
+# One genuinely random bonus status per character, rolled ONCE at creation and
+# stored in characters.data["random_status"]. It is independent of the base
+# status: the base row is never copied into it, and it is never re-rolled or
+# overwritten at login — loaded verbatim from the account.
+CHAR_RANDOM_STATUS_POOL = [
+    (1001, 3, 10),    # atk
+    (1002, 30, 120),  # hp
+    (1003, 2, 8),     # def
+    (1004, 2, 8),     # hit
+    (1005, 1, 6),     # eva
+    (1006, 1, 4),     # cri
+    (1007, 1, 4),     # res
+]
+
+
+def roll_character_random_status(db, char_id: int, rng=None) -> dict:
+    """Roll the character's single random status ONCE and persist it.
+
+    Returns the saved {attr_id: value}. If the account already has one
+    (migration for existing accounts), the stored value is returned
+    unchanged — never regenerated, never replaced by the base status.
+    """
+    import random as _random
+    rng = rng or _random
+    saved = db.get_random_status(char_id)
+    if saved:
+        return saved
+    aid, lo, hi = rng.choice(CHAR_RANDOM_STATUS_POOL)
+    status = {aid: rng.randint(lo, hi)}
+    db.set_random_status(char_id, status)
+    return status
+
+
 def recalc_character(db, char_id: int) -> dict:
     """Recompute + persist (characters.data) the attribute set; returns it."""
     row = db.get_character(char_id)
     if row is None:
         return {}
     attrs = character_attributes(db, char_id, row["level"], row["profession"])
+    # the character's random status rides the final attribute set
+    for aid, val in (db.get_random_status(char_id) or {}).items():
+        attrs[aid] = attrs.get(aid, 0) + val
     db.save_attributes(char_id, attrs)
     max_hp = attrs.get(1002, 100)
     hp, _old_max = db.get_hp(char_id)

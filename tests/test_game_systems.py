@@ -146,7 +146,8 @@ async def test_equip_and_unequip_flow(server):
     attrs = db.load_attributes(char_id)
     assert attrs.get("power", 0) > 0
 
-    resp = await c.rpc(P.UNEQUIP_ITEM, {0: 1})
+    # the real client sends gameitem.indexId (the instance id), not a slot
+    resp = await c.rpc(P.UNEQUIP_ITEM, {0: db.get_equipped_index(char_id, 1)})
     assert resp.body[0] == 0
     assert db.get_equipped(char_id, 1) is None
 
@@ -156,7 +157,7 @@ async def test_equip_and_unequip_flow(server):
 
     # unequip recalculates: power drops when the weapon comes off
     weapon_power = attrs.get("power")
-    resp = await c.rpc(P.UNEQUIP_ITEM, {0: 0})
+    resp = await c.rpc(P.UNEQUIP_ITEM, {0: db.get_equipped_index(char_id, 0)})
     assert resp.body[0] == 0
     assert db.get_equipped(char_id, 0) is None
     attrs_after = db.load_attributes(char_id)

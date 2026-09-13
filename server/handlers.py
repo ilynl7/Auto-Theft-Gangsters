@@ -305,7 +305,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         # The client dereferences .general.profession, .attribute_other.level
         # and .visual on each — a flat {id,name,level,sex} blob crashes it.
         chars = [W.encode_character_overview(
-            r,
+            r, db=self.server.db,
             comb_value=W.comb_value_for(self.server.db, r["id"],
                                          r["level"]))
             for r in rows]
@@ -370,6 +370,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
                                             economy.BADGE_DB_SLOT, item_id)
         for skill_id in prof_def["skills"]:
             self.server.db.learn_skill(char_id, skill_id)
+        # the character's RANDOM STATUS: one genuinely random bonus rolled
+        # ONCE at creation, independent of the base/default status, and
+        # persisted in characters.data so login loads it instead of
+        # regenerating or copying the base values.
+        economy.roll_character_random_status(self.server.db, char_id)
         # Roll + persist a REAL instance for every starting piece ONCE (the
         # rolled skill/colors/attrs become permanent for this character),
         # then compute + persist the initial attribute set / power.
@@ -924,6 +929,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
     # ------------------------------------------------------------------
     # inventory / equipment
     # ------------------------------------------------------------------
+    @staticmethod
+    def _index_is_instance(db, index_id) -> bool:
+        """True when `index_id` names a real persisted item instance."""
+        return isinstance(index_id, int) and db.get_instance(index_id) is not None
+
     def _get_or_create_instance(self, char_id: int, slot: int, item_id: int,
                                 idef: dict):
         """Return the persisted instance for an equipped item, rolling one
@@ -1032,6 +1042,30 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         self._sync_backpack(s, char_id)
         self._recalc_and_sync(s, char_id)
 
+    def _unequip_index(self, s: Session, msg, index_id: int) -> None:
+        """Unequip by ITEM INSTANCE id. The real client's UnEquipItem sends
+        gameitem.indexId (ObjMainPlayer.UnEquipItem), never a slot number —
+        the slot is derived by finding which equip slot holds the instance.
+        The item stays in the backpack as its persisted instance; stats and
+        power are recalculated without it and the new state is saved (the
+        equip_slots row is deleted, so relogin cannot re-equip it)."""
+        db = self.server.db
+        row = self._require_char(s)
+        if row is None:
+            s.respond(msg, {0: 1})
+            return
+        char_id = row["id"]
+        slot = db.find_slot_by_index(char_id, index_id)
+        if slot is None:
+            # not equipped (or a legacy slot-only id) — idempotent success
+            # so the client's equipment UI always clears.
+            s.respond(msg, {0: 0})
+            self._recalc_and_sync(s, char_id)
+            return
+        db.set_equipped(char_id, slot, None)
+        s.respond(msg, {0: 0})
+        self._recalc_and_sync(s, char_id)
+
     def _unequip_slot(self, s: Session, msg, slot: int) -> None:
         db = self.server.db
         row = self._require_char(s)
@@ -1041,6 +1075,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         char_id = row["id"]
         # empty the slot (item stays in the backpack as its persisted
         # instance) then recalc stats/power without it
+        index_id = db.get_equipped_index(char_id, slot)
         if db.get_equipped(char_id, slot) is None:
             s.respond(msg, {0: 2})
             return
@@ -1049,16 +1084,22 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         self._recalc_and_sync(s, char_id)
 
     async def h_unequip_item(self, s: Session, msg) -> None:
-        # unequip_item(117) carries the client EQUIP_BACKPACK_TYPE slot:
-        # 0 weapon, 1 head, 2 body, 3 legs, 4 belt, 5 necklace.
-        # The client's Position-2..6 armor rows map to db slots 1..5, so the
-        # wire slot already matches the db slot for 1..5.
+        # unequip_item(117).request is {indexId(0)} — the ITEM INSTANCE id
+        # (SprotoType.unequip_item + ObjMainPlayer.UnEquipItem), NOT a slot.
+        # The legacy path by slot number stays as a fallback for ids that
+        # don't match an equipped instance.
+        raw = msg.body.get(0)
+        if self._index_is_instance(self.server.db, raw):
+            self._unequip_index(s, msg, raw)
+            return
+        # fallback: treat small ints as EQUIP_BACKPACK_TYPE slots
+        # (0 weapon, 1 head, 2 body, 3 legs, 4 belt, 5 necklace).
         # NOTE: _unequip_slot is a plain (sync) method — it must NOT be
         # awaited or the dispatch raises "object NoneType can't be used in
         # 'await' expression" and tag 117 never gets a response.
-        slot = msg.body.get(0)
+        slot = raw
         if slot is None or slot == 0:
-            self._unequip_slot(s, msg, 0)   # legacy/body fallback
+            self._unequip_slot(s, msg, 0)   # weapon
         elif isinstance(slot, int) and 1 <= slot <= 5:
             self._unequip_slot(s, msg, slot)
         else:
@@ -1085,7 +1126,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         self._recalc_and_sync(s, char_id)
 
     async def h_unequip_badge(self, s: Session, msg) -> None:
-        self._unequip_slot(s, msg, economy.BADGE_DB_SLOT)
+        raw = msg.body.get(0)
+        if self._index_is_instance(self.server.db, raw):
+            self._unequip_index(s, msg, raw)
+        else:
+            self._unequip_slot(s, msg, economy.BADGE_DB_SLOT)
 
     async def h_equip_fashion(self, s: Session, msg) -> None:
         db = self.server.db
@@ -1107,7 +1152,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         self._sync_fashion(s, char_id)
 
     async def h_unequip_fashion(self, s: Session, msg) -> None:
-        self._unequip_slot(s, msg, economy.FASHION_DB_SLOT)
+        raw = msg.body.get(0)
+        if self._index_is_instance(self.server.db, raw):
+            self._unequip_index(s, msg, raw)
+        else:
+            self._unequip_slot(s, msg, economy.FASHION_DB_SLOT)
 
     async def h_open_item_package(self, s: Session, msg) -> None:
         db = self.server.db
@@ -1284,7 +1333,9 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
         if npc is not None:
             exp, gold, drops = self.server.world.kill_npc(
                 npc, wp.char_id, wp.name)
-            self.server.world.respawn_npc(npc)
+            # the death is now registered (dead flag + hp 0); the lazy
+            # respawn moves BELOW so kill-driven mission progress sees the
+            # dead NPC first.
         else:
             base = economy.NPC_KINDS[1]
             exp, gold, drops = base["exp"], base["gold"], {}
@@ -1312,9 +1363,11 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
             attrs=attrs, comb_value=attrs.get("power", 0))})
         self._sync_backpack(s, wp.char_id)
         # Count the kill towards active kill-type missions (main-chain
-        # KILL_TARGET_NPC/KILLMONSTER and side missions). The client matches
-        # missionData.Target against the dying NPC's NpcData row id.
+        # KILL_TARGET_NPC/KILLMONSTER and side missions) while the NPC is
+        # still registered dead; the respawn runs right after.
         self._progress_kill_missions(s, wp.char_id, npcid)
+        if npc is not None:
+            self.server.world.respawn_npc(npc)
         # Echo the death to the rest of the map so other clients see the kill.
         self.server.world.broadcast(
             wp.map_id, P.LOCAL_NPC_DIE,
@@ -1330,8 +1383,19 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
 
         Main-chain missions use MISSION_LOGICTYPE KILLMONSTER(1)/
         LOCAL_KILL_MONSTER(14)/KILL_TARGET_NPC(23) and match
-        missionData.Target against the dying NPC's NpcData row id.
+        missionData.Target against the dying NPC's id. The recovered main
+        chain stores its own target ids (mission 1001 targets "9901", the
+        tutorial kill) that do NOT equal the NpcData row id the client
+        reports ("21131"...), so a kill counts when the reported id matches
+        ANY spelling of the NPC: raw npcid, its NpcData id, its kind server
+        id, or its kind index.
         """
+        # every id this kill could legitimately be matched by
+        npc_ids = {str(npcid)}
+        for kind, kdef in economy.NPC_KINDS.items():
+            if kdef["npcdataid"] == npcid:
+                npc_ids.update({str(kind), str(kdef["npcdataid"])})
+
         changed = False
         for mrow in self.server.db.list_missions(char_id):
             if mrow["state"] != 0:
@@ -1348,7 +1412,7 @@ class Handlers(PvpHandlersMixin, WildHandlersMixin,
                 if not sdef or sdef.get("type") != "kill":
                     continue
                 target = sdef.get("npc_id")
-            if target is not None and str(target) != str(npcid):
+            if target is not None and str(target) not in npc_ids:
                 continue
             mrow2 = self.server.db.get_mission(char_id, mrow["mission_id"])
             if mrow2 is None or mrow2["state"] != 0:

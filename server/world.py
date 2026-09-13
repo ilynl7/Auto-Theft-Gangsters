@@ -216,10 +216,21 @@ _DEFAULT_HP = 120
 
 
 def _general_blob(name: str, profession: int, line_index: int = 0,
-                  map_id: str = economy.MAIN_CITY_MAP) -> bytes:
-    return P._enc.encode_object({
+                  map_id: str = economy.MAIN_CITY_MAP,
+                  tutorial: int = None) -> bytes:
+    """SprotoType.general: name(0) profession(1) lineIndex(2) mapInfoId(3)
+    tutorial(4). `tutorial` drives the client's IsTutorialFinish —
+    ChooseRoleRootLogic sets PlayerData.IsTutorialFinish =
+    general.HasTutorial && general.tutorial == 1, and
+    NewTutorialSceneManager only runs the tutorial sequence when that flag
+    is false. Existing accounts MUST get tutorial=1 or the tutorial
+    replays on every login."""
+    fields = {
         0: name, 1: profession, 2: line_index, 3: map_id,
-    })
+    }
+    if tutorial is not None:
+        fields[4] = tutorial
+    return P._enc.encode_object(fields)
 
 
 def _visual_blob(profession: int, name: str) -> bytes:
@@ -381,7 +392,8 @@ def encode_character_aoi_blob(char_id: int, name: str, level: int,
 
 
 def encode_character_overview(row, visual_profession: int = None,
-                              comb_value: int = None) -> bytes:
+                              comb_value: int = None,
+                              db=None) -> bytes:
     """SprotoType.character_overview for character_list / character_create.
 
     The client dereferences .general.profession, .attribute_other.level,
@@ -389,14 +401,21 @@ def encode_character_overview(row, visual_profession: int = None,
     ChooseRoleRootLogic), so all four sub-objects must be present.
     attribute_overview.combValue (field 1) is the combat power the role
     select screen shows — a rolled base power, not 0.
+
+    With `db`, general.tutorial (field 4) reflects the account's saved
+    tutorial state: 1 once tutorial_finish(306) was received, absent for
+    brand-new characters so only they run the tutorial.
     """
     profession = row["profession"] if visual_profession is None \
         else visual_profession
     if comb_value is None:
         comb_value = 100 * row["level"]
+    tutorial = None
+    if db is not None:
+        tutorial = 1 if db.get_progress(row["id"], "tutorial_done") else None
     return P._enc.encode_object({
         0: row["id"],
-        1: _general_blob(row["name"], profession),
+        1: _general_blob(row["name"], profession, tutorial=tutorial),
         2: _attribute_overview_blob(row["level"], comb_value),
         3: _visual_blob(profession, row["name"]),
         4: row["created_at"],
